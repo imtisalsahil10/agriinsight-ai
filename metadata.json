@@ -1,0 +1,9 @@
+{
+  "name": "AgriInsight AI",
+  "description": "An AI-powered agricultural assistant for farmers to diagnose crop diseases, check weather impacts, and get pesticide advice.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
