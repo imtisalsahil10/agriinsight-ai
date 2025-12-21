@@ -1,51 +1,86 @@
 import React from 'react';
-import { Leaf, CloudRain, Bug, Sprout, TrendingUp, Languages } from 'lucide-react';
+import { Leaf, CloudRain, Bug, Sprout, TrendingUp, Languages, Droplets, Calendar, Wind, Zap, Map, Beaker } from 'lucide-react';
 import { QuickAction } from './types';
 
 export const APP_NAME = "AgriInsight AI";
-export const WELCOME_MESSAGE = "Hello! I'm your AI agricultural assistant. I can help you identify crop diseases from photos, check weather impacts, suggest pesticides, or analyze market trends. How can I help your farm today?";
+export const WELCOME_MESSAGE = "Hello! I'm your AI agricultural assistant. I can help you identify crop diseases, manage irrigation, track market prices, predict yields, and much more. How can I help your farm today?";
 
 export const QUICK_ACTIONS: QuickAction[] = [
   {
     id: 'disease',
-    label: 'Identify Disease',
+    label: 'Disease Detection',
     icon: <Leaf className="w-5 h-5" />,
-    prompt: "I suspect my crops have a disease. Can I upload a photo for you to analyze, or describe the symptoms?",
-    color: "bg-red-100 text-red-700 hover:bg-red-200"
+    prompt: "Analyze my crop image for diseases and recommend treatments.",
+    color: "text-red-700"
+  },
+  {
+    id: 'soil',
+    label: 'Soil Analysis',
+    icon: <Sprout className="w-5 h-5" />,
+    prompt: "Analyze soil health and recommend improvements for better yields.",
+    color: "text-green-700"
+  },
+  {
+    id: 'irrigation',
+    label: 'Irrigation Schedule',
+    icon: <Droplets className="w-5 h-5" />,
+    prompt: "Create an irrigation schedule based on weather and soil conditions.",
+    color: "text-blue-700"
   },
   {
     id: 'weather',
     label: 'Weather Forecast',
     icon: <CloudRain className="w-5 h-5" />,
-    prompt: "What is the agricultural weather forecast for the next 7 days in my region? Please include rainfall and humidity predictions.",
-    color: "bg-blue-100 text-blue-700 hover:bg-blue-200"
+    prompt: "Show me the agricultural weather forecast for the next 7 days.",
+    color: "text-cyan-700"
   },
   {
     id: 'pests',
     label: 'Pest Control',
     icon: <Bug className="w-5 h-5" />,
-    prompt: "What are the common pests affecting corn and soybeans right now, and what are the recommended organic and chemical treatments?",
-    color: "bg-amber-100 text-amber-700 hover:bg-amber-200"
-  },
-  {
-    id: 'soil',
-    label: 'Soil Health',
-    icon: <Sprout className="w-5 h-5" />,
-    prompt: "How can I improve my soil nitrogen levels naturally for the upcoming planting season?",
-    color: "bg-agri-100 text-agri-700 hover:bg-agri-200"
+    prompt: "Identify pest threats and recommend organic/chemical treatments.",
+    color: "text-amber-700"
   },
   {
     id: 'market',
-    label: 'Market Trends',
+    label: 'Market Prices',
     icon: <TrendingUp className="w-5 h-5" />,
-    prompt: "What are the current market trends and price projections for wheat and corn?",
-    color: "bg-purple-100 text-purple-700 hover:bg-purple-200"
+    prompt: "Show current market prices and trends for crops in my region.",
+    color: "text-purple-700"
   },
   {
-    id: 'translate',
-    label: 'Translator',
-    icon: <Languages className="w-5 h-5" />,
-    prompt: "Translate the following agricultural text to Hindi (or English if already in Hindi): [PASTE_TEXT_HERE]",
-    color: "bg-teal-100 text-teal-700 hover:bg-teal-200"
+    id: 'calendar',
+    label: 'Crop Calendar',
+    icon: <Calendar className="w-5 h-5" />,
+    prompt: "Create a seasonal planting and harvesting calendar for my crops.",
+    color: "text-indigo-700"
+  },
+  {
+    id: 'alerts',
+    label: 'Weather Alerts',
+    icon: <Wind className="w-5 h-5" />,
+    prompt: "Alert me about severe weather, frost, or pest season warnings.",
+    color: "text-orange-700"
+  },
+  {
+    id: 'fertilizer',
+    label: 'Fertilizer Guide',
+    icon: <Beaker className="w-5 h-5" />,
+    prompt: "Find the right fertilizer with dosage and safety information.",
+    color: "text-lime-700"
+  },
+  {
+    id: 'yield',
+    label: 'Yield Prediction',
+    icon: <Zap className="w-5 h-5" />,
+    prompt: "Predict my crop yield based on current conditions and history.",
+    color: "text-yellow-700"
+  },
+  {
+    id: 'locations',
+    label: 'Multi-Farm Manager',
+    icon: <Map className="w-5 h-5" />,
+    prompt: "Manage multiple farm locations and compare conditions.",
+    color: "text-emerald-700"
   }
 ];

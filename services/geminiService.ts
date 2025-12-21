@@ -1,5 +1,5 @@
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
-import { Message, Source, WeatherData } from "../types";
+import { Message, Source, WeatherData, DiseaseAnalysis } from "../types";
 
 // Ensure API key is present
 const apiKey = process.env.API_KEY;
@@ -81,13 +81,15 @@ export const getWeather = async (lat: number, lon: number): Promise<WeatherData>
     };
 
   } catch (error) {
+    const message = (error as any)?.message || "";
+    const isRateLimit = message.includes("Quota exceeded") || message.includes("RESOURCE_EXHAUSTED") || message.includes("Too Many Requests") || (error as any)?.status === 429;
     console.error("Weather fetch error:", error);
     return {
       temp: "--",
       humidity: "--",
       wind: "--",
-      condition: "Unavailable",
-      location: "Location Error"
+      condition: isRateLimit ? "Rate limit exceeded" : "Unavailable",
+      location: isRateLimit ? "Try again later" : "Location Error"
     };
   }
 };
@@ -177,5 +179,81 @@ export const generateResponse = async (
   } catch (error) {
     console.error("Gemini API Error:", error);
     throw new Error("Failed to get response from AgriInsight.");
+  }
+};
+
+export const analyzeDiseaseFromImage = async (imageBase64: string): Promise<DiseaseAnalysis | null> => {
+  try {
+    const modelId = "gemini-2.5-flash";
+    const prompt = `Analyze this crop/leaf image for diseases. If it shows a diseased plant, provide:
+    
+    CRITICAL OUTPUT RULE: Return ONLY a raw JSON object. Do not include Markdown formatting or any text outside the JSON.
+    
+    JSON Schema:
+    {
+      "disease": "Name of disease (e.g., Powdery Mildew)",
+      "severity": "low|medium|high",
+      "symptoms": ["List", "of", "visible", "symptoms"],
+      "organicRemedies": ["Organic", "treatment", "options"],
+      "chemicalRemedies": ["Chemical", "treatment", "options"],
+      "preventionTips": ["Prevention", "methods"]
+    }
+    
+    If the image shows a healthy plant, still return the JSON with "disease": "Healthy" and "severity": "low".`;
+
+    // Extract mime type and base64 payload from data URL
+    const [meta, b64] = imageBase64.split(',');
+    const mimeMatch = meta?.match(/data:(.*?);base64/);
+    const mimeType = mimeMatch?.[1] || 'image/jpeg';
+    const data = b64 || imageBase64;
+
+    if (!data) {
+      console.error("No image data found for disease analysis");
+      return null;
+    }
+
+    const response: GenerateContentResponse = await ai.models.generateContent({
+      model: modelId,
+      contents: [
+        { 
+          role: 'user', 
+          parts: [
+            { text: prompt },
+            { inlineData: { mimeType, data } }
+          ]
+        }
+      ],
+    });
+
+    if (!response.text) {
+      return null;
+    }
+
+    let text = response.text;
+    text = text.replace(/```json/gi, '').replace(/```/g, '');
+    
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    
+    if (start !== -1 && end !== -1) {
+      try {
+        const jsonStr = text.substring(start, end + 1);
+        const json = JSON.parse(jsonStr);
+        return {
+          disease: json.disease || "Unknown",
+          severity: json.severity || "medium",
+          symptoms: json.symptoms || [],
+          organicRemedies: json.organicRemedies || [],
+          chemicalRemedies: json.chemicalRemedies || [],
+          preventionTips: json.preventionTips || []
+        };
+      } catch (e) {
+        console.error("JSON Parse error:", e);
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error("Disease analysis error:", error);
+    return null;
   }
 };

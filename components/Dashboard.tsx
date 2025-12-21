@@ -6,13 +6,14 @@ import { WeatherData, CachedWeatherData } from '../types';
 
 interface DashboardProps {
   onQuickAction: (prompt: string) => void;
+  onNavigate?: (view: string) => void;
   language: 'en-US' | 'hi-IN';
 }
 
 const WEATHER_CACHE_KEY = 'agriinsight_weather_cache';
 const CACHE_DURATION = 60 * 60 * 1000; // 1 hour in milliseconds
 
-const Dashboard: React.FC<DashboardProps> = ({ onQuickAction, language }) => {
+const Dashboard: React.FC<DashboardProps> = ({ onQuickAction, onNavigate, language }) => {
   const isHindi = language === 'hi-IN';
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [loadingWeather, setLoadingWeather] = useState(false);
@@ -197,7 +198,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onQuickAction, language }) => {
           {QUICK_ACTIONS.map((action) => (
             <button
               key={action.id}
-              onClick={() => onQuickAction(action.prompt)}
+              onClick={() => {
+                if (onNavigate && ['disease', 'soil', 'irrigation', 'market', 'alerts', 'calendar', 'fertilizer', 'locations', 'yield'].includes(action.id)) {
+                  onNavigate(action.id);
+                } else {
+                  onQuickAction(action.prompt);
+                }
+              }}
               className="group flex flex-col items-start p-5 bg-white dark:bg-slate-800 border border-gray-100 dark:border-slate-700 rounded-2xl shadow-sm hover:shadow-md hover:border-agri-200 dark:hover:border-agri-600 transition-all text-left"
             >
               <div className={`p-3 rounded-xl mb-3 ${action.color.replace('text-', 'bg-').replace('100', '50')} dark:bg-opacity-20`}>

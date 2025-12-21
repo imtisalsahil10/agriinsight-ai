@@ -1,13 +1,22 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Image as ImageIcon, X, Loader2, Menu, Mic, MicOff, Languages, AlertCircle } from 'lucide-react';
-import { generateResponse } from './services/geminiService';
-import { Message, LoadingState, Language, ViewState, UserProfile } from './types';
+import { generateResponse, analyzeDiseaseFromImage } from './services/geminiService';
+import { Message, LoadingState, Language, ViewState } from './types';
 import { WELCOME_MESSAGE, APP_NAME } from './constants';
 import ChatBubble from './components/ChatBubble';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import VideoAnalysis from './components/VideoAnalysis';
 import Settings from './components/Settings';
+import DiseaseDetection from './components/DiseaseDetection';
+import SoilAnalysis from './components/SoilAnalysis';
+import IrrigationScheduleView from './components/IrrigationSchedule';
+import MarketPrices from './components/MarketPrices';
+import WeatherAlerts from './components/WeatherAlerts';
+import CropCalendar from './components/CropCalendar';
+import FertilizerGuide from './components/FertilizerGuide';
+import MultiLocations from './components/MultiLocations';
+import YieldPrediction from './components/YieldPrediction';
 
 // Helper to convert file to base64
 const fileToBase64 = (file: File): Promise<string> => {
@@ -351,16 +360,33 @@ const App: React.FC = () => {
 
   // Render content based on current view
   const renderContent = () => {
-    if (!user) return null;
-
     switch (view) {
       case 'dashboard':
         return (
           <Dashboard 
-            onQuickAction={(prompt) => sendMessage(prompt)} 
+            onQuickAction={(prompt) => sendMessage(prompt)}
+            onNavigate={(viewId) => setView(viewId as ViewState)}
             language={language}
           />
         );
+      case 'disease':
+        return <DiseaseDetection language={language} onAnalyze={analyzeDiseaseFromImage} />;
+      case 'soil':
+        return <SoilAnalysis language={language} />;
+      case 'irrigation':
+        return <IrrigationScheduleView language={language} />;
+      case 'market':
+        return <MarketPrices language={language} />;
+      case 'alerts':
+        return <WeatherAlerts language={language} />;
+      case 'calendar':
+        return <CropCalendar language={language} />;
+      case 'fertilizer':
+        return <FertilizerGuide language={language} />;
+      case 'locations':
+        return <MultiLocations language={language} />;
+      case 'yield':
+        return <YieldPrediction language={language} />;
       case 'video':
         return (
           <VideoAnalysis 
@@ -446,11 +472,6 @@ const App: React.FC = () => {
               <Languages className="w-3.5 h-3.5 mr-1.5" />
               {language === 'hi-IN' ? 'हिन्दी' : 'English'}
             </button>
-            <div className="hidden md:block">
-              <span className="text-xs bg-agri-100 text-agri-800 dark:bg-agri-900 dark:text-agri-300 px-2 py-1 rounded-full font-medium">
-                Gemini 2.5
-              </span>
-            </div>
           </div>
         </header>
 
