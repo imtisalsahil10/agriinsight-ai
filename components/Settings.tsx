@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Languages, Shield, Info, Bell, Moon, ChevronRight, User, X, LogOut } from 'lucide-react';
-import { UserProfile } from '../types';
+import { Languages, Shield, Info, Bell, Moon, ChevronRight, X } from 'lucide-react';
 
 interface SettingsProps {
   language: 'en-US' | 'hi-IN';
@@ -9,8 +8,6 @@ interface SettingsProps {
   onToggleDarkMode: () => void;
   weatherAlerts: boolean;
   onToggleWeatherAlerts: () => void;
-  user: UserProfile;
-  onLogout: () => void;
 }
 
 const Settings: React.FC<SettingsProps> = ({ 
@@ -19,9 +16,7 @@ const Settings: React.FC<SettingsProps> = ({
   darkMode, 
   onToggleDarkMode,
   weatherAlerts,
-  onToggleWeatherAlerts,
-  user,
-  onLogout
+  onToggleWeatherAlerts
 }) => {
   const isHindi = language === 'hi-IN';
   const [showPrivacy, setShowPrivacy] = useState(false);
@@ -144,26 +139,6 @@ const Settings: React.FC<SettingsProps> = ({
       </h1>
 
       <div className="space-y-6">
-        {/* Profile Card */}
-        <div className="bg-white dark:bg-slate-800 p-6 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm flex items-center transition-colors">
-          <div className="w-16 h-16 rounded-full bg-agri-100 dark:bg-agri-900 flex items-center justify-center text-agri-700 dark:text-agri-300 mb-0" aria-hidden="true">
-             <User className="w-8 h-8" />
-          </div>
-          <div className="ml-4 flex-1">
-            <h2 className="text-lg font-bold text-slate-800 dark:text-white">{user.name}</h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400">
-              {user.type === 'guest' ? (isHindi ? "अतिथि पहुंच" : "Guest Access") : (isHindi ? "प्रो प्लान सदस्य" : "Pro Plan Member")}
-            </p>
-          </div>
-          {user.type !== 'guest' && (
-            <button 
-              className="text-sm text-agri-600 dark:text-agri-400 font-medium hover:text-agri-700 dark:hover:text-agri-300 focus:outline-none focus:ring-2 focus:ring-agri-500 rounded-lg px-3 py-1.5"
-              aria-label={isHindi ? "प्रोफ़ाइल संपादित करें" : "Edit profile"}
-            >
-              {isHindi ? "संपादित करें" : "Edit"}
-            </button>
-          )}
-        </div>
 
         {/* Settings Sections */}
         {sections.map((section, idx) => (
@@ -210,16 +185,6 @@ const Settings: React.FC<SettingsProps> = ({
             </div>
           </div>
         ))}
-        
-        {/* Logout Button */}
-        <button
-          onClick={onLogout}
-          className="w-full flex items-center justify-center px-6 py-4 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-2xl border border-red-100 dark:border-red-800 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
-        >
-          <LogOut className="w-5 h-5 mr-2" />
-          <span className="font-bold">{isHindi ? "लॉग आउट करें" : "Log Out"}</span>
-        </button>
-
       </div>
 
       {/* Privacy Policy Modal */}

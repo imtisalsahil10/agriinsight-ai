@@ -29,6 +29,13 @@ export interface WeatherData {
   location: string;
 }
 
+export interface CachedWeatherData {
+  data: WeatherData;
+  timestamp: number;
+  latitude: number;
+  longitude: number;
+}
+
 export interface UserProfile {
   name: string;
   type: 'user' | 'guest';

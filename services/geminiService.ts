@@ -34,7 +34,19 @@ export const getWeather = async (lat: number, lon: number): Promise<WeatherData>
       }
     });
 
-    let text = response.text || "";
+    // Check if response has text
+    if (!response.text) {
+      console.warn("Weather API returned no text content");
+      return {
+        temp: "--",
+        humidity: "--",
+        wind: "--",
+        condition: "Unavailable",
+        location: "Unknown Location"
+      };
+    }
+
+    let text = response.text;
     
     // Aggressive cleanup to find the JSON object
     // Remove markdown code blocks if present
@@ -60,7 +72,13 @@ export const getWeather = async (lat: number, lon: number): Promise<WeatherData>
     }
     
     console.warn("Weather data format invalid. Text received:", response.text);
-    throw new Error("Invalid weather data format");
+    return {
+      temp: "--",
+      humidity: "--",
+      wind: "--",
+      condition: "Unavailable",
+      location: "Unknown Location"
+    };
 
   } catch (error) {
     console.error("Weather fetch error:", error);

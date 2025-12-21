@@ -1,48 +1,97 @@
 import React, { useEffect, useState } from 'react';
 import { QUICK_ACTIONS } from '../constants';
-import { Sun, Droplets, Wind, ArrowRight, Activity, MapPin, Loader2, Cloud, CloudRain, Snowflake } from 'lucide-react';
+import { Sun, Droplets, Wind, ArrowRight, Activity, MapPin, Loader2, Cloud, CloudRain, Snowflake, RefreshCw } from 'lucide-react';
 import { getWeather } from '../services/geminiService';
-import { WeatherData } from '../types';
+import { WeatherData, CachedWeatherData } from '../types';
 
 interface DashboardProps {
   onQuickAction: (prompt: string) => void;
   language: 'en-US' | 'hi-IN';
 }
 
+const WEATHER_CACHE_KEY = 'agriinsight_weather_cache';
+const CACHE_DURATION = 60 * 60 * 1000; // 1 hour in milliseconds
+
 const Dashboard: React.FC<DashboardProps> = ({ onQuickAction, language }) => {
   const isHindi = language === 'hi-IN';
   const [weather, setWeather] = useState<WeatherData | null>(null);
-  const [loadingWeather, setLoadingWeather] = useState(true);
+  const [loadingWeather, setLoadingWeather] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
 
+  // Load cached weather data on mount
   useEffect(() => {
+    const cachedData = localStorage.getItem(WEATHER_CACHE_KEY);
+    if (cachedData) {
+      try {
+        const parsed: CachedWeatherData = JSON.parse(cachedData);
+        const now = Date.now();
+        
+        // Check if cache is still valid (less than 1 hour old)
+        if (now - parsed.timestamp < CACHE_DURATION) {
+          setWeather(parsed.data);
+        } else {
+          // Cache expired, remove it
+          localStorage.removeItem(WEATHER_CACHE_KEY);
+        }
+      } catch (err) {
+        console.error("Failed to parse cached weather", err);
+        localStorage.removeItem(WEATHER_CACHE_KEY);
+      }
+    }
+  }, []);
+
+  const fetchWeatherData = () => {
     // Check if geolocation is supported
     if (!navigator.geolocation) {
-      setLocationError("Geolocation not supported");
-      setLoadingWeather(false);
+      setLocationError(isHindi ? "स्थान सेवा समर्थित नहीं" : "Geolocation not supported");
       return;
     }
 
-    // Get position
+    setLoadingWeather(true);
+    setLocationError(null);
+
+    // Get position with timeout
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         try {
           const data = await getWeather(position.coords.latitude, position.coords.longitude);
           setWeather(data);
+          
+          // Cache the weather data with timestamp and location
+          const cacheData: CachedWeatherData = {
+            data,
+            timestamp: Date.now(),
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude
+          };
+          localStorage.setItem(WEATHER_CACHE_KEY, JSON.stringify(cacheData));
         } catch (err) {
           console.error("Failed to fetch weather", err);
-          setLocationError("Weather unavailable");
+          setLocationError(isHindi ? "मौसम अनुपलब्ध" : "Weather unavailable");
         } finally {
           setLoadingWeather(false);
         }
       },
       (error) => {
         console.error("Geolocation error", error);
-        setLocationError("Location access denied");
+        // Provide specific error messages
+        let errorMsg = "Location access denied";
+        if (error.code === 1) {
+          errorMsg = isHindi ? "स्थान अनुमति अस्वीकृत" : "Location permission denied";
+        } else if (error.code === 2) {
+          errorMsg = isHindi ? "स्थान अनुपलब्ध" : "Location unavailable";
+        } else if (error.code === 3) {
+          errorMsg = isHindi ? "स्थान अनुरोध समय समाप्त" : "Location request timed out";
+        }
+        setLocationError(errorMsg);
         setLoadingWeather(false);
+      },
+      {
+        timeout: 10000,
+        enableHighAccuracy: false
       }
     );
-  }, []);
+  };
 
   // Helper to choose weather icon
   const getWeatherIcon = (condition: string) => {
@@ -87,18 +136,28 @@ const Dashboard: React.FC<DashboardProps> = ({ onQuickAction, language }) => {
             )}
             {isHindi ? "आज का मौसम" : "Today's Weather"}
           </h2>
-          {weather && (
-            <span className="text-xs text-gray-400 dark:text-slate-400 flex items-center">
-              <MapPin className="w-3 h-3 mr-1" />
-              {weather.location}
-            </span>
-          )}
+          <div className="flex items-center gap-2">
+            {weather && (
+              <span className="text-xs text-gray-400 dark:text-slate-400 flex items-center">
+                <MapPin className="w-3 h-3 mr-1" />
+                {weather.location}
+              </span>
+            )}
+            <button
+              onClick={fetchWeatherData}
+              disabled={loadingWeather}
+              className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-agri-600 hover:bg-agri-700 disabled:bg-gray-400 rounded-lg transition-colors"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingWeather ? 'animate-spin' : ''}`} />
+              {loadingWeather ? (isHindi ? 'लोड हो रहा...' : 'Loading...') : (isHindi ? 'अपडेट करें' : 'Fetch')}
+            </button>
+          </div>
         </div>
 
         {loadingWeather ? (
           <div className="flex justify-center items-center h-20 text-gray-400">
             <Loader2 className="w-6 h-6 animate-spin mr-2" />
-            <span>Loading local forecast...</span>
+            <span>{isHindi ? 'स्थानीय पूर्वानुमान लोड हो रहा है...' : 'Loading local forecast...'}</span>
           </div>
         ) : weather ? (
           <div className="grid grid-cols-3 gap-4">
@@ -118,8 +177,12 @@ const Dashboard: React.FC<DashboardProps> = ({ onQuickAction, language }) => {
             </div>
           </div>
         ) : (
-          <div className="flex justify-center items-center h-20 text-red-400 bg-red-50 dark:bg-red-900/30 rounded-xl">
-             <span>{locationError || "Unable to load weather data"}</span>
+          <div className="flex flex-col justify-center items-center h-20 text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-slate-700/50 rounded-xl">
+            {locationError ? (
+              <span className="text-red-500 dark:text-red-400">{locationError}</span>
+            ) : (
+              <span className="text-sm">{isHindi ? 'मौसम डेटा प्राप्त करने के लिए "अपडेट करें" पर क्लिक करें' : 'Click "Fetch" to get weather data'}</span>
+            )}
           </div>
         )}
       </div>

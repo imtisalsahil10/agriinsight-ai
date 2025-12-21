@@ -8,7 +8,6 @@ import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import VideoAnalysis from './components/VideoAnalysis';
 import Settings from './components/Settings';
-import LoginPage from './components/LoginPage';
 
 // Helper to convert file to base64
 const fileToBase64 = (file: File): Promise<string> => {
@@ -21,9 +20,6 @@ const fileToBase64 = (file: File): Promise<string> => {
 };
 
 const App: React.FC = () => {
-  // Auth State
-  const [user, setUser] = useState<UserProfile | null>(null);
-
   // App State
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -70,28 +66,6 @@ const App: React.FC = () => {
     }
   }, [darkMode]);
 
-  // Auth Handlers
-  const handleLogin = () => {
-    setUser({
-      name: 'Farmer John',
-      type: 'user',
-      email: 'farmer@example.com'
-    });
-  };
-
-  const handleGuestLogin = () => {
-    setUser({
-      name: 'Guest Farmer',
-      type: 'guest'
-    });
-  };
-
-  const handleLogout = () => {
-    setUser(null);
-    setView('dashboard');
-    setIsSidebarOpen(false);
-  };
-
   const toggleDarkMode = () => {
     setDarkMode(!darkMode);
   };
@@ -114,20 +88,38 @@ const App: React.FC = () => {
     }
   };
 
-  const startListening = () => {
+  const startListening = async () => {
     // 1. Browser Support Check
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      setSpeechError("Voice input is not supported in this browser.");
+      setSpeechError("Voice input is not supported in this browser. Please use Chrome or Edge.");
       return;
     }
 
-    // 2. Security Check (Web Speech API requires HTTPS)
-    if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-      setSpeechError("Voice input requires a secure HTTPS connection.");
+    // 2. Security Check (Web Speech API requires HTTPS in production)
+    const isLocalhost = window.location.hostname === 'localhost' || 
+                       window.location.hostname === '127.0.0.1' ||
+                       window.location.hostname === '[::1]';
+    
+    if (window.location.protocol !== 'https:' && !isLocalhost) {
+      setSpeechError("Voice input requires HTTPS. Your connection is not secure.");
       return;
     }
 
-    // 3. Connectivity Check
+    // 3. Check for microphone permission first
+    try {
+      if (navigator.permissions) {
+        const permissionStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+        if (permissionStatus.state === 'denied') {
+          setSpeechError("Microphone permission denied. Please enable it in your browser settings.");
+          return;
+        }
+      }
+    } catch (permErr) {
+      // Permission API might not be supported, continue anyway
+      console.log("Permission API not available, proceeding with speech recognition");
+    }
+
+    // 4. Connectivity Check
     if (!navigator.onLine) {
       setSpeechError("You are offline. Voice input requires an internet connection.");
       return;
@@ -139,58 +131,103 @@ const App: React.FC = () => {
       
       recognition.continuous = false;
       recognition.interimResults = false;
-      recognition.lang = language; // Set language immediately on creation
+      recognition.lang = language;
+      recognition.maxAlternatives = 1;
+
+      // Add timeout to prevent hanging
+      const timeout = setTimeout(() => {
+        if (recognitionRef.current) {
+          recognitionRef.current.stop();
+          setSpeechError("Speech recognition timed out. Please try again.");
+          setIsListening(false);
+        }
+      }, 15000); // 15 second timeout
 
       recognition.onstart = () => {
         setIsListening(true);
         setSpeechError(null);
+        console.log("Speech recognition started");
       };
 
       recognition.onresult = (event: any) => {
+        clearTimeout(timeout);
         const transcript = event.results[0][0].transcript;
         setInputText(prev => prev + (prev ? ' ' : '') + transcript);
+        console.log("Transcript:", transcript);
       };
 
       recognition.onerror = (event: any) => {
-        // Filter out routine errors
-        if (event.error === 'no-speech' || event.error === 'aborted') {
+        clearTimeout(timeout);
+        
+        // Filter out routine errors that don't need user notification
+        if (event.error === 'no-speech') {
+          console.log('No speech detected');
+          setIsListening(false);
+          setSpeechError("No speech detected. Please try again.");
+          setTimeout(() => setSpeechError(null), 3000);
+          return;
+        }
+        
+        if (event.error === 'aborted') {
           setIsListening(false);
           return;
         }
 
-        console.error('Speech recognition error:', event.error);
+        console.error('Speech recognition error:', event.error, event);
         setIsListening(false);
         
-        let errorMsg = "Voice input failed.";
-        if (event.error === 'network') {
-          errorMsg = "Network error: Browser speech service unreachable. Check connection or privacy settings.";
-        } else if (event.error === 'not-allowed') {
-          errorMsg = "Microphone blocked. Please allow permission in browser settings.";
-        } else if (event.error === 'service-not-allowed') {
-          errorMsg = "Speech service not allowed by this browser.";
+        let errorMsg = "Voice input failed. Please try typing instead.";
+        
+        switch(event.error) {
+          case 'network':
+            errorMsg = "Network error: Cannot connect to speech service. Check your internet connection.";
+            break;
+          case 'not-allowed':
+          case 'permission-denied':
+            errorMsg = "Microphone permission denied. Please allow microphone access in your browser settings.";
+            break;
+          case 'service-not-allowed':
+            errorMsg = "Speech service is blocked. Check browser permissions.";
+            break;
+          case 'audio-capture':
+            errorMsg = "Cannot access microphone. Check if another app is using it.";
+            break;
+          case 'language-not-supported':
+            errorMsg = `Language ${language} not supported for speech recognition.`;
+            break;
+          case 'bad-grammar':
+            errorMsg = "Speech recognition configuration error.";
+            break;
         }
         
         setSpeechError(errorMsg);
-        // Clear error after 5 seconds
-        setTimeout(() => setSpeechError(null), 5000);
+        // Clear error after 6 seconds
+        setTimeout(() => setSpeechError(null), 6000);
       };
 
       recognition.onend = () => {
+        clearTimeout(timeout);
         setIsListening(false);
+        console.log("Speech recognition ended");
       };
 
       recognitionRef.current = recognition;
       recognition.start();
 
     } catch (e) {
-      console.error("Failed to initialize recognition", e);
-      setSpeechError("Could not initialize voice input.");
+      console.error("Failed to initialize recognition:", e);
+      setIsListening(false);
+      setSpeechError("Could not start voice input. Your browser may not support this feature.");
     }
   };
 
   const stopListening = () => {
     if (recognitionRef.current) {
-      recognitionRef.current.stop();
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {
+        console.log("Recognition already stopped");
+      }
     }
     setIsListening(false);
   };
@@ -339,8 +376,6 @@ const App: React.FC = () => {
             onToggleDarkMode={toggleDarkMode}
             weatherAlerts={weatherAlerts}
             onToggleWeatherAlerts={toggleWeatherAlerts}
-            user={user}
-            onLogout={handleLogout}
           />
         );
       case 'chat':
@@ -367,15 +402,6 @@ const App: React.FC = () => {
     }
   };
 
-  if (!user) {
-    return (
-      <LoginPage 
-        onLogin={handleLogin} 
-        onGuestLogin={handleGuestLogin} 
-      />
-    );
-  }
-
   return (
     <div className="flex h-screen bg-slate-50 dark:bg-slate-900 font-sans overflow-hidden transition-colors duration-200">
       
@@ -385,8 +411,6 @@ const App: React.FC = () => {
         onViewChange={setView} 
         isOpen={isSidebarOpen} 
         onClose={() => setIsSidebarOpen(false)}
-        user={user}
-        onLogout={handleLogout}
       />
 
       {/* Main Content */}

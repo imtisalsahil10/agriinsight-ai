@@ -1,17 +1,15 @@
 import React from 'react';
-import { Home, MessageSquare, Settings, LogOut, Sprout, Youtube } from 'lucide-react';
-import { ViewState, UserProfile } from '../types';
+import { Home, MessageSquare, Settings, Sprout, Youtube } from 'lucide-react';
+import { ViewState } from '../types';
 
 interface SidebarProps {
   currentView: ViewState;
   onViewChange: (view: ViewState) => void;
   isOpen: boolean;
   onClose: () => void;
-  user: UserProfile;
-  onLogout: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, isOpen, onClose, user, onLogout }) => {
+const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, isOpen, onClose }) => {
   return (
     <>
       {/* Mobile Overlay */}
@@ -85,27 +83,10 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, isOpen, on
             </button>
           </nav>
 
-          {/* User Profile / Footer */}
-          <div className="p-4 border-t border-gray-100 dark:border-slate-700">
-            <div className="flex items-center p-3 rounded-xl bg-gray-50 dark:bg-slate-700/50">
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${user.type === 'guest' ? 'bg-gray-400' : 'bg-soil-500'}`}>
-                {user.name.charAt(0)}
-              </div>
-              <div className="ml-3 overflow-hidden flex-1">
-                <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{user.name}</p>
-                <p className="text-xs text-gray-500 dark:text-slate-400 truncate">
-                  {user.type === 'guest' ? 'Guest Access' : 'Pro Plan'}
-                </p>
-              </div>
-              <button 
-                onClick={onLogout}
-                className="p-1.5 rounded-lg hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/20 dark:hover:text-red-400 text-gray-400 transition-colors"
-                title="Log out"
-                aria-label="Log out"
-              >
-                <LogOut className="w-4 h-4" />
-              </button>
-            </div>
+          {/* Footer */}
+          <div className="p-4 border-t border-gray-100 dark:border-slate-700 text-center text-xs text-gray-500 dark:text-slate-400">
+            <p>AgriInsight AI</p>
+            <p className="text-xs mt-1">Powered by Gemini</p>
           </div>
         </div>
       </div>
