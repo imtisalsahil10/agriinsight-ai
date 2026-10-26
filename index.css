@@ -1,0 +1,33 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', sans-serif;
+  background-color: #f8fafc;
+}
+
+html.large-text {
+  font-size: 18px;
+}
+
+html.high-contrast body {
+  background: #000;
+  color: #fff;
+}
+
+html.high-contrast .bg-white,
+html.high-contrast .dark\:bg-slate-800,
+html.high-contrast .dark\:bg-slate-900 {
+  background-color: #111 !important;
+  color: #fff !important;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

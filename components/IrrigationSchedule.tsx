@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Droplets, Loader2 } from 'lucide-react';
+import DemoBadge from './voice/DemoBadge';
+import { generateIrrigationSchedule } from '../lib/tools/irrigation';
 import { IrrigationSchedule } from '../types';
 
 interface IrrigationScheduleComponentProps {
@@ -12,29 +14,10 @@ const IrrigationScheduleView: React.FC<IrrigationScheduleComponentProps> = ({ la
   const [loading, setLoading] = useState(false);
   const [cropType, setCropType] = useState('wheat');
 
-  const resolvePrimaryCrop = (input: string) => {
-    const parts = input.split(',').map((item) => item.trim()).filter(Boolean);
-    return parts[0] || input || 'custom crop';
-  };
-
-  const handleGenerate = async () => {
+  const handleGenerate = () => {
     setLoading(true);
-    const primaryCrop = resolvePrimaryCrop(cropType);
-    setTimeout(() => {
-      setSchedule({
-        cropType: primaryCrop,
-        nextIrrigationDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toLocaleDateString(),
-        waterAmount: '5-6 cm',
-        frequency: 'Every 7-10 days',
-        savingTips: [
-          'Use drip irrigation to save 40% water',
-          'Water early morning to reduce evaporation',
-          'Mulch soil to retain moisture',
-          'Monitor soil moisture before each irrigation'
-        ]
-      });
-      setLoading(false);
-    }, 1000);
+    setSchedule(generateIrrigationSchedule(cropType).data);
+    setLoading(false);
   };
 
   return (
@@ -76,6 +59,7 @@ const IrrigationScheduleView: React.FC<IrrigationScheduleComponentProps> = ({ la
 
       {schedule && (
         <div className="space-y-4">
+          <DemoBadge language={language} />
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-blue-50 dark:bg-blue-900/30 p-4 rounded-xl">
               <p className="text-xs text-gray-600 dark:text-gray-400">{isHindi ? "अगली सिंचाई" : "Next Irrigation"}</p>

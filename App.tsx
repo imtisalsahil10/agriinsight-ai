@@ -1,10 +1,27 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Send, Image as ImageIcon, X, Loader2, Menu, Mic, MicOff, Languages, AlertCircle } from 'lucide-react';
-import { generateResponse, analyzeDiseaseFromImage } from './services/geminiService';
+import { Send, Image as ImageIcon, X, Loader2, Menu, Languages } from 'lucide-react';
+import { generateResponse, streamResponse, analyzeDiseaseFromImage } from './services/geminiService';
 import { Message, LoadingState, Language, ViewState } from './types';
 import { WELCOME_MESSAGE, APP_NAME } from './constants';
+import { buildMorningBriefing } from './lib/briefing';
+import { dueReminders, loadFarm, markReminderNotified, rememberSummary, syncFarm, updateFarm } from './lib/farm/store';
+import { loadFieldPrefs, saveFieldPrefs, type FieldPrefs } from './lib/field/prefs';
+import { t } from './lib/i18n';
+import { detectLanguageSwitch } from './lib/i18n/detect';
+import { downscaleImage } from './lib/image/downscale';
+import { diagnoseCropDisease } from './lib/tools/disease';
+import { rememberLeafImage } from './lib/tools/registry';
+import type { ToolResult } from './lib/tools/types';
+import { VOICE_PROMPT_HINT } from './lib/voice/copy';
+import { createVoiceProvider } from './lib/voice/createProvider';
+import { isLeafRequest } from './lib/voice/leaf';
+import { createVoiceSession } from './lib/voice/session';
+import { initialState } from './lib/voice/sessionMachine';
+import type { SessionState, VoiceSession } from './lib/voice/types';
 import ChatBubble from './components/ChatBubble';
 import Sidebar from './components/Sidebar';
+import LeafCapture from './components/voice/LeafCapture';
+import VoiceHome from './components/voice/VoiceHome';
 import Dashboard from './components/Dashboard';
 import VideoAnalysis from './components/VideoAnalysis';
 import Settings from './components/Settings';
@@ -28,6 +45,19 @@ const fileToBase64 = (file: File): Promise<string> => {
   });
 };
 
+function cacheAdvice(text: string): void {
+  try {
+    localStorage.setItem('agriinsight_last_advice', text);
+  } catch {
+    // private mode
+  }
+  if (typeof caches === 'undefined') return;
+  void caches.open('agriinsight-advice').then((cache) => cache.put(
+    '/advice.json',
+    new Response(JSON.stringify({ text }), { headers: { 'Content-Type': 'application/json' } }),
+  ));
+}
+
 const App: React.FC = () => {
   // App State
   const [messages, setMessages] = useState<Message[]>([
@@ -41,11 +71,16 @@ const App: React.FC = () => {
   const [inputText, setInputText] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [loadingState, setLoadingState] = useState<LoadingState>('idle');
-  const [view, setView] = useState<ViewState>('dashboard');
+  const [view, setView] = useState<ViewState>('voice');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [language, setLanguage] = useState<Language>('en-US');
-  const [isListening, setIsListening] = useState(false);
-  const [speechError, setSpeechError] = useState<string | null>(null);
+  const [voiceState, setVoiceState] = useState<SessionState>(initialState());
+  const [toolCards, setToolCards] = useState<ToolResult[]>([]);
+  const [leafOpen, setLeafOpen] = useState(false);
+  const [field, setField] = useState<FieldPrefs>(() => loadFieldPrefs());
+  const [online, setOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine));
+  const [lastAdvice, setLastAdvice] = useState('');
+  const [reminderText, setReminderText] = useState<string | null>(null);
   
   // Settings State
   const [darkMode, setDarkMode] = useState(false);
@@ -55,16 +90,74 @@ const App: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const recognitionRef = useRef<any>(null);
+  const sessionRef = useRef<VoiceSession | null>(null);
+  const languageRef = useRef(language);
+  const messagesRef = useRef(messages);
+  const viewRef = useRef(view);
+  languageRef.current = language;
+  viewRef.current = view;
 
-  // Stop recognition on unmount
-  useEffect(() => {
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.abort();
-      }
-    };
+  const remember = useCallback((message: Message) => {
+    const next = [...messagesRef.current, message];
+    messagesRef.current = next;
+    setMessages(next);
   }, []);
+
+  useEffect(() => {
+    const session = createVoiceSession({
+      provider: createVoiceProvider({
+        language: () => languageRef.current,
+        lowBandwidth: () => loadFieldPrefs().lowBandwidth,
+      }),
+      language: () => languageRef.current,
+      history: () => messagesRef.current
+        .filter((message) => message.id !== 'welcome' && message.content.trim().length > 0)
+        .slice(-20)
+        .map((message) => ({ role: message.role, content: message.content })),
+      reply: (request) => streamResponse(
+        `${VOICE_PROMPT_HINT}\n\n${request.prompt}`,
+        request.history,
+        request.language,
+        request.onDelta,
+        request.signal,
+      ),
+      onUser: (text) => {
+        const nextLanguage = detectLanguageSwitch(text);
+        if (nextLanguage) setLanguage(nextLanguage);
+        if (isLeafRequest(text)) setLeafOpen(true);
+        remember({
+          id: crypto.randomUUID(),
+          role: 'user',
+          content: text,
+          timestamp: Date.now(),
+        });
+      },
+      onAssistant: (result) => {
+        rememberSummary(result.text);
+        cacheAdvice(result.text);
+        setLastAdvice(result.text);
+        remember({
+          id: crypto.randomUUID(),
+          role: 'model',
+          content: result.text,
+          sources: result.sources,
+          timestamp: Date.now(),
+        });
+      },
+      onTool: (result) => {
+        setToolCards((cards) => [result, ...cards].slice(0, 4));
+        cacheAdvice(result.summary);
+        setLastAdvice(result.summary);
+      },
+    });
+    sessionRef.current = session;
+    const unsubscribe = session.subscribe(setVoiceState);
+    return () => {
+      unsubscribe();
+      session.dispose();
+      sessionRef.current = null;
+    };
+  }, [remember]);
 
   // Handle Dark Mode
   useEffect(() => {
@@ -74,6 +167,42 @@ const App: React.FC = () => {
       document.documentElement.classList.remove('dark');
     }
   }, [darkMode]);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle('high-contrast', field.highContrast);
+    document.documentElement.classList.toggle('large-text', field.largeText);
+  }, [field.highContrast, field.largeText]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem('agriinsight_last_advice');
+    if (stored) setLastAdvice(stored);
+    const onStatus = () => {
+      setOnline(navigator.onLine);
+      if (navigator.onLine) void syncFarm();
+    };
+    window.addEventListener('online', onStatus);
+    window.addEventListener('offline', onStatus);
+    return () => {
+      window.removeEventListener('online', onStatus);
+      window.removeEventListener('offline', onStatus);
+    };
+  }, []);
+
+  useEffect(() => {
+    const tick = () => {
+      const due = dueReminders();
+      const next = due[0];
+      if (!next) return;
+      markReminderNotified(next.id);
+      setReminderText(next.text);
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('AgriInsight', { body: next.text });
+      }
+    };
+    tick();
+    const timer = window.setInterval(tick, 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   const toggleDarkMode = () => {
     setDarkMode(!darkMode);
@@ -97,156 +226,84 @@ const App: React.FC = () => {
     }
   };
 
-  const startListening = async () => {
-    // 1. Browser Support Check
-    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
-      setSpeechError("Voice input is not supported in this browser. Please use Chrome or Edge.");
-      return;
+  useEffect(() => {
+    if (viewRef.current !== 'voice') {
+      sessionRef.current?.stop();
     }
+  }, [view]);
 
-    // 2. Security Check (Web Speech API requires HTTPS in production)
-    const isLocalhost = window.location.hostname === 'localhost' || 
-                       window.location.hostname === '127.0.0.1' ||
-                       window.location.hostname === '[::1]';
-    
-    if (window.location.protocol !== 'https:' && !isLocalhost) {
-      setSpeechError("Voice input requires HTTPS. Your connection is not secure.");
-      return;
+  const playBriefing = async () => {
+    const farm = loadFarm();
+    if (typeof farm.latitude !== 'number' && navigator.geolocation) {
+      await new Promise<void>((resolve) => {
+        navigator.geolocation.getCurrentPosition((position) => {
+          updateFarm({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            location: farm.location || 'This device',
+          });
+          resolve();
+        }, () => resolve(), { timeout: 8000 });
+      });
     }
-
-    // 3. Check for microphone permission first
-    try {
-      if (navigator.permissions) {
-        const permissionStatus = await navigator.permissions.query({ name: 'microphone' as PermissionName });
-        if (permissionStatus.state === 'denied') {
-          setSpeechError("Microphone permission denied. Please enable it in your browser settings.");
-          return;
-        }
-      }
-    } catch (permErr) {
-      // Permission API might not be supported, continue anyway
-      console.log("Permission API not available, proceeding with speech recognition");
-    }
-
-    // 4. Connectivity Check
-    if (!navigator.onLine) {
-      setSpeechError("You are offline. Voice input requires an internet connection.");
-      return;
-    }
-
-    try {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      const recognition = new SpeechRecognition();
-      
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = language;
-      recognition.maxAlternatives = 1;
-
-      // Add timeout to prevent hanging
-      const timeout = setTimeout(() => {
-        if (recognitionRef.current) {
-          recognitionRef.current.stop();
-          setSpeechError("Speech recognition timed out. Please try again.");
-          setIsListening(false);
-        }
-      }, 15000); // 15 second timeout
-
-      recognition.onstart = () => {
-        setIsListening(true);
-        setSpeechError(null);
-        console.log("Speech recognition started");
-      };
-
-      recognition.onresult = (event: any) => {
-        clearTimeout(timeout);
-        const transcript = event.results[0][0].transcript;
-        setInputText(prev => prev + (prev ? ' ' : '') + transcript);
-        console.log("Transcript:", transcript);
-      };
-
-      recognition.onerror = (event: any) => {
-        clearTimeout(timeout);
-        
-        // Filter out routine errors that don't need user notification
-        if (event.error === 'no-speech') {
-          console.log('No speech detected');
-          setIsListening(false);
-          setSpeechError("No speech detected. Please try again.");
-          setTimeout(() => setSpeechError(null), 3000);
-          return;
-        }
-        
-        if (event.error === 'aborted') {
-          setIsListening(false);
-          return;
-        }
-
-        console.error('Speech recognition error:', event.error, event);
-        setIsListening(false);
-        
-        let errorMsg = "Voice input failed. Please try typing instead.";
-        
-        switch(event.error) {
-          case 'network':
-            errorMsg = "Network error: Cannot connect to speech service. Check your internet connection.";
-            break;
-          case 'not-allowed':
-          case 'permission-denied':
-            errorMsg = "Microphone permission denied. Please allow microphone access in your browser settings.";
-            break;
-          case 'service-not-allowed':
-            errorMsg = "Speech service is blocked. Check browser permissions.";
-            break;
-          case 'audio-capture':
-            errorMsg = "Cannot access microphone. Check if another app is using it.";
-            break;
-          case 'language-not-supported':
-            errorMsg = `Language ${language} not supported for speech recognition.`;
-            break;
-          case 'bad-grammar':
-            errorMsg = "Speech recognition configuration error.";
-            break;
-        }
-        
-        setSpeechError(errorMsg);
-        // Clear error after 6 seconds
-        setTimeout(() => setSpeechError(null), 6000);
-      };
-
-      recognition.onend = () => {
-        clearTimeout(timeout);
-        setIsListening(false);
-        console.log("Speech recognition ended");
-      };
-
-      recognitionRef.current = recognition;
-      recognition.start();
-
-    } catch (e) {
-      console.error("Failed to initialize recognition:", e);
-      setIsListening(false);
-      setSpeechError("Could not start voice input. Your browser may not support this feature.");
+    const briefing = await buildMorningBriefing();
+    setToolCards(briefing.cards.slice(0, 4));
+    rememberSummary(briefing.script);
+    cacheAdvice(briefing.script);
+    setLastAdvice(briefing.script);
+    remember({
+      id: crypto.randomUUID(),
+      role: 'model',
+      content: briefing.script,
+      timestamp: Date.now(),
+    });
+    if (window.speechSynthesis) {
+      const utterance = new SpeechSynthesisUtterance(briefing.script);
+      utterance.lang = languageRef.current;
+      utterance.rate = loadFieldPrefs().speechRate;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
     }
   };
 
-  const stopListening = () => {
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {
-        console.log("Recognition already stopped");
-      }
-    }
-    setIsListening(false);
+  const onLeaf = async (dataUrl: string) => {
+    setLeafOpen(false);
+    const prefs = loadFieldPrefs();
+    const image = await downscaleImage(dataUrl, prefs.lowBandwidth ? 512 : 768, prefs.lowBandwidth ? 0.5 : 0.7);
+    rememberLeafImage(image);
+    const result = await diagnoseCropDisease(image, analyzeDiseaseFromImage);
+    setToolCards((cards) => [result, ...cards].slice(0, 4));
+    cacheAdvice(result.summary);
+    setLastAdvice(result.summary);
+    remember({
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: languageRef.current === 'hi-IN' ? 'पत्ती की फोटो' : 'Leaf photo',
+      image,
+      timestamp: Date.now(),
+    });
+    remember({
+      id: crypto.randomUUID(),
+      role: 'model',
+      content: result.summary,
+      timestamp: Date.now(),
+    });
+    sessionRef.current?.inject(result.summary);
   };
 
-  const toggleListening = () => {
-    if (isListening) {
-      stopListening();
-    } else {
-      startListening();
+  const onMic = () => {
+    const session = sessionRef.current;
+    if (!session) return;
+    const phase = session.getState().phase;
+    if (phase === 'thinking' || phase === 'speaking') {
+      session.bargeIn();
+      return;
     }
+    if (phase === 'listening') {
+      session.release();
+      return;
+    }
+    void session.start();
   };
 
   // Auto-scroll to bottom in chat view
@@ -302,11 +359,11 @@ const App: React.FC = () => {
       timestamp: Date.now()
     };
 
-    setMessages(prev => [...prev, newUserMessage]);
+    const prior = messagesRef.current;
+    remember(newUserMessage);
     setInputText('');
     setSelectedImage(null);
     setLoadingState('loading');
-    setSpeechError(null);
     
     if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
@@ -315,37 +372,32 @@ const App: React.FC = () => {
     try {
       const { text: aiText, sources } = await generateResponse(
         newUserMessage.content,
-        messages, 
+        prior,
         newUserMessage.image,
         language
       );
 
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
+      remember({
+        id: crypto.randomUUID(),
         role: 'model',
         content: aiText,
         sources: sources,
         timestamp: Date.now()
-      };
-
-      setMessages(prev => [...prev, aiMessage]);
+      });
       setLoadingState('idle');
     } catch (error) {
       console.error(error);
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
+      remember({
+        id: crypto.randomUUID(),
         role: 'model',
-        content: language === 'hi-IN' 
-          ? "क्षमा करें, आपके अनुरोध को संसाधित करते समय एक त्रुटि हुई। कृपया अपना कनेक्शन जांचें और पुनः प्रयास करें।"
-          : "I'm sorry, I encountered an error while processing your request. Please check your connection and try again.",
+        content: t(language, 'chat_error'),
         timestamp: Date.now()
-      };
-      setMessages(prev => [...prev, errorMessage]);
+      });
       setLoadingState('error');
       
       setTimeout(() => setLoadingState('idle'), 2000);
     }
-  }, [inputText, selectedImage, loadingState, messages, view, language]);
+  }, [inputText, selectedImage, loadingState, view, language, remember]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -361,6 +413,19 @@ const App: React.FC = () => {
   // Render content based on current view
   const renderContent = () => {
     switch (view) {
+      case 'voice':
+        return (
+          <VoiceHome
+            language={language}
+            messages={messages}
+            state={voiceState}
+            tools={toolCards}
+            onMic={onMic}
+            onMode={(mode) => sessionRef.current?.setMode(mode)}
+            onOpenDashboard={() => setView('dashboard')}
+            onBriefing={() => { void playBriefing(); }}
+          />
+        );
       case 'dashboard':
         return (
           <Dashboard 
@@ -402,6 +467,8 @@ const App: React.FC = () => {
             onToggleDarkMode={toggleDarkMode}
             weatherAlerts={weatherAlerts}
             onToggleWeatherAlerts={toggleWeatherAlerts}
+            field={field}
+            onField={(prefs) => setField(saveFieldPrefs(prefs))}
           />
         );
       case 'chat':
@@ -417,7 +484,7 @@ const App: React.FC = () => {
                 <div className="flex items-center space-x-2 bg-white dark:bg-slate-800 p-4 rounded-2xl rounded-tl-none border border-gray-100 dark:border-slate-700 shadow-sm transition-colors">
                   <Loader2 className="w-5 h-5 text-agri-600 animate-spin" />
                   <span className="text-sm text-gray-500 dark:text-gray-400">
-                    {language === 'hi-IN' ? "विश्लेषण कर रहा है..." : "Analyzing data..."}
+                    {t(language, 'chat_analyzing')}
                   </span>
                 </div>
               </div>
@@ -433,7 +500,8 @@ const App: React.FC = () => {
       
       {/* Sidebar */}
       <Sidebar 
-        currentView={view} 
+        currentView={view}
+        language={language}
         onViewChange={setView} 
         isOpen={isSidebarOpen} 
         onClose={() => setIsSidebarOpen(false)}
@@ -447,15 +515,18 @@ const App: React.FC = () => {
           <div className="flex items-center">
             <button 
               onClick={() => setIsSidebarOpen(true)}
-              className="md:hidden mr-3 text-slate-500 dark:text-slate-400 p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"
+              aria-label={t(language, 'menu_open')}
+              className="md:hidden mr-3 min-h-14 min-w-14 inline-flex items-center justify-center text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"
             >
               <Menu className="w-6 h-6" />
             </button>
             <h1 className="text-lg font-bold text-slate-800 dark:text-white hidden md:block">
-              {view === 'dashboard' ? 'Dashboard' : 
-               view === 'video' ? 'Video Analysis' : 
-               view === 'settings' ? 'Settings' : 
-               'Chat Assistant'}
+              {view === 'voice' ? t(language, 'header_talk') :
+               view === 'dashboard' ? t(language, 'header_dashboard') :
+               view === 'video' ? t(language, 'header_video') :
+               view === 'settings' ? t(language, 'header_settings') :
+               view === 'chat' ? t(language, 'header_chat') :
+               t(language, 'header_app')}
             </h1>
             <h1 className="text-lg font-bold text-slate-800 dark:text-white md:hidden">{APP_NAME}</h1>
           </div>
@@ -463,7 +534,7 @@ const App: React.FC = () => {
           <div className="flex items-center space-x-3">
             <button 
               onClick={toggleLanguage}
-              className={`flex items-center px-3 py-1.5 rounded-full text-xs font-bold transition-all border ${
+              className={`flex items-center min-h-14 px-4 rounded-full text-xs font-bold transition-all border ${
                 language === 'hi-IN' 
                   ? 'bg-orange-50 border-orange-200 text-orange-700 dark:bg-orange-900/30 dark:border-orange-800 dark:text-orange-400' 
                   : 'bg-slate-50 border-slate-200 text-slate-600 dark:bg-slate-700 dark:border-slate-600 dark:text-slate-300'
@@ -476,28 +547,27 @@ const App: React.FC = () => {
         </header>
 
         {/* View Content */}
-        <main className="flex-1 overflow-y-auto scroll-smooth relative">
+        {!online && (
+          <div role="status" className="bg-amber-100 text-amber-950 px-4 py-3 text-sm">
+            <p className="font-semibold">{t(language, 'offline')}</p>
+            {lastAdvice && <p className="mt-1">{t(language, 'last_advice')}: {lastAdvice}</p>}
+          </div>
+        )}
+        {reminderText && (
+          <div role="status" className="bg-agri-50 text-agri-900 px-4 py-3 text-sm flex items-center justify-between gap-3">
+            <p>{reminderText}</p>
+            <button type="button" className="min-h-14 font-semibold" onClick={() => setReminderText(null)}>{t(language, 'voice_close')}</button>
+          </div>
+        )}
+        <main className={`flex-1 relative min-h-0 ${view === 'voice' ? 'overflow-hidden flex flex-col' : 'overflow-y-auto scroll-smooth'}`}>
           {renderContent()}
         </main>
+        {leafOpen && <LeafCapture language={language} onClose={() => setLeafOpen(false)} onCapture={(dataUrl) => { void onLeaf(dataUrl); }} />}
 
         {/* Input Area - Only show in Chat view */}
         <div className={`bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 p-4 z-20 transition-all ${view !== 'chat' ? 'hidden' : 'block'}`}>
           <div className="max-w-3xl mx-auto">
-            
-            {/* Error Message */}
-            {speechError && (
-              <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/30 border border-red-100 dark:border-red-800 rounded-xl flex items-center text-xs text-red-600 dark:text-red-400 animate-in fade-in slide-in-from-bottom-2">
-                <AlertCircle className="w-4 h-4 mr-2 flex-shrink-0" />
-                <span>{speechError}</span>
-                <button onClick={() => setSpeechError(null)} className="ml-auto text-red-400 hover:text-red-700 dark:hover:text-red-200">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            )}
-
-            <div className={`relative flex items-end bg-slate-100 dark:bg-slate-900 rounded-2xl border transition-all p-2 ${
-                isListening ? 'border-red-400 ring-2 ring-red-100' : 'border-transparent focus-within:border-agri-400 focus-within:ring-2 focus-within:ring-agri-100 dark:focus-within:ring-agri-900'
-              }`}>
+            <div className="relative flex items-end bg-slate-100 dark:bg-slate-900 rounded-2xl border border-transparent focus-within:border-agri-400 focus-within:ring-2 focus-within:ring-agri-100 dark:focus-within:ring-agri-900 transition-all p-2">
               
               {/* Image Preview */}
               {selectedImage && (
@@ -524,36 +594,19 @@ const App: React.FC = () => {
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
-                className="p-3 text-slate-500 dark:text-slate-400 hover:text-agri-600 dark:hover:text-agri-400 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition-colors"
-                title="Upload image"
+                className="min-h-14 min-w-14 inline-flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-agri-600 dark:hover:text-agri-400 hover:bg-white dark:hover:bg-slate-800 rounded-xl transition-colors"
+                title={t(language, 'chat_upload')}
+                aria-label={t(language, 'chat_upload')}
               >
                 <ImageIcon className="w-6 h-6" />
               </button>
 
-              {/* Voice Button */}
-              <button
-                onClick={toggleListening}
-                className={`p-3 rounded-xl transition-all mr-1 ${
-                  isListening 
-                    ? 'bg-red-100 text-red-600 animate-pulse hover:bg-red-200' 
-                    : 'text-slate-500 dark:text-slate-400 hover:text-agri-600 dark:hover:text-agri-400 hover:bg-white dark:hover:bg-slate-800'
-                }`}
-                title={isListening ? "Stop listening" : "Start voice input"}
-              >
-                {isListening ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
-              </button>
-
-              {/* Text Area */}
               <textarea
                 ref={textareaRef}
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={
-                  isListening 
-                    ? (language === 'hi-IN' ? "सुन रहा हूँ..." : "Listening...")
-                    : (language === 'hi-IN' ? "फसल, कीट या मौसम के बारे में पूछें..." : "Ask about crops, pests, or weather...")
-                }
+                placeholder={t(language, 'chat_placeholder')}
                 className="flex-1 max-h-32 bg-transparent border-none focus:ring-0 text-slate-800 dark:text-slate-100 placeholder-slate-400 resize-none py-3 px-2 leading-relaxed"
                 rows={1}
               />
@@ -562,7 +615,8 @@ const App: React.FC = () => {
               <button
                 onClick={() => sendMessage()}
                 disabled={(!inputText.trim() && !selectedImage) || loadingState !== 'idle'}
-                className={`p-3 rounded-xl transition-all ${
+                aria-label={t(language, 'chat_send')}
+                className={`min-h-14 min-w-14 inline-flex items-center justify-center rounded-xl transition-all ${
                   (!inputText.trim() && !selectedImage) || loadingState !== 'idle'
                     ? 'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed'
                     : 'bg-agri-600 text-white hover:bg-agri-700 shadow-md hover:shadow-lg'

@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Zap, Loader2 } from 'lucide-react';
+import DemoBadge from './voice/DemoBadge';
+import { predictYield } from '../lib/tools/yield';
 import { YieldPrediction } from '../types';
 
 interface YieldPredictionProps {
@@ -12,30 +14,10 @@ const YieldPredictionComp: React.FC<YieldPredictionProps> = ({ language }) => {
   const [loading, setLoading] = useState(false);
   const [inputs, setInputs] = useState({ cropType: 'wheat', area: 5, rainfallDays: 25, temperature: 22 });
 
-  const handlePredict = async () => {
+  const handlePredict = () => {
     setLoading(true);
-    setTimeout(() => {
-      const primaryCrop = inputs.cropType.split(',').map((c) => c.trim().toLowerCase()).filter(Boolean)[0] || 'wheat';
-      const baseYields: { [key: string]: number } = { wheat: 50, rice: 60, corn: 70 };
-      const baseYield = baseYields[primaryCrop] || 50;
-      const rainfallFactor = inputs.rainfallDays / 30;
-      const expectedYield = baseYield * inputs.area * (0.5 + rainfallFactor * 0.5);
-
-      setPrediction({
-        cropType: primaryCrop,
-        expectedYield: Math.round(expectedYield),
-        unit: 'quintals',
-        qualityGrade: inputs.rainfallDays > 20 && inputs.temperature > 20 ? 'A' : 'B',
-        confidence: 75 + Math.random() * 15,
-        factors: [
-          { name: 'Rainfall', impact: inputs.rainfallDays > 20 ? 'positive' : 'negative', value: `${inputs.rainfallDays} days` },
-          { name: 'Temperature', impact: inputs.temperature > 20 ? 'positive' : 'negative', value: `${inputs.temperature}°C` },
-          { name: 'Soil Quality', impact: 'positive', value: 'Good' },
-          { name: 'Crop Variety', impact: 'positive', value: 'High-yield' }
-        ]
-      });
-      setLoading(false);
-    }, 1200);
+    setPrediction(predictYield(inputs).data);
+    setLoading(false);
   };
 
   return (
@@ -111,6 +93,8 @@ const YieldPredictionComp: React.FC<YieldPredictionProps> = ({ language }) => {
 
       {prediction && (
         <div className="space-y-4">
+          <DemoBadge language={language} />
+        <div className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-yellow-50 dark:bg-yellow-900/30 p-6 rounded-xl text-center">
               <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">{isHindi ? "अपेक्षित पैदावार" : "Expected Yield"}</p>
@@ -151,6 +135,7 @@ const YieldPredictionComp: React.FC<YieldPredictionProps> = ({ language }) => {
               ))}
             </div>
           </div>
+        </div>
         </div>
       )}
     </div>

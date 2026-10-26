@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { Sprout, Loader2 } from 'lucide-react';
+import DemoBadge from './voice/DemoBadge';
+import { analyzeSoil } from '../lib/tools/soil';
 import { SoilData } from '../types';
 
 interface SoilAnalysisProps {
@@ -12,26 +14,10 @@ const SoilAnalysis: React.FC<SoilAnalysisProps> = ({ language }) => {
   const [loading, setLoading] = useState(false);
   const [inputs, setInputs] = useState({ pH: 7, nitrogen: 50, phosphorus: 40, potassium: 300, organicMatter: 2 });
 
-  const handleAnalyze = async () => {
+  const handleAnalyze = () => {
     setLoading(true);
-    // Simulated analysis
-    setTimeout(() => {
-      setSoilData({
-        pH: inputs.pH,
-        nitrogen: inputs.nitrogen,
-        phosphorus: inputs.phosphorus,
-        potassium: inputs.potassium,
-        organicMatter: inputs.organicMatter,
-        cropSuitability: ['Wheat', 'Rice', 'Corn', 'Barley'],
-        recommendations: [
-          inputs.nitrogen < 50 ? 'Add nitrogen-rich fertilizer' : 'Nitrogen levels optimal',
-          inputs.pH < 6 ? 'Lime required to increase pH' : 'pH within acceptable range',
-          inputs.organicMatter < 3 ? 'Increase compost and organic matter' : 'Good organic matter content',
-          'Apply balanced NPK fertilizer before planting'
-        ]
-      });
-      setLoading(false);
-    }, 1000);
+    setSoilData(analyzeSoil(inputs).data);
+    setLoading(false);
   };
 
   return (
@@ -115,6 +101,7 @@ const SoilAnalysis: React.FC<SoilAnalysisProps> = ({ language }) => {
 
       {soilData && (
         <div className="space-y-4">
+          <DemoBadge language={language} />
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <div className="bg-blue-50 dark:bg-blue-900/30 p-4 rounded-xl">
               <p className="text-xs text-gray-600 dark:text-gray-400">{isHindi ? "pH" : "pH"}</p>

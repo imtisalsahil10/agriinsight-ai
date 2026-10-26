@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { QUICK_ACTIONS } from '../constants';
 import { Sun, Droplets, Wind, ArrowRight, Activity, MapPin, Loader2, Cloud, CloudRain, Snowflake, RefreshCw } from 'lucide-react';
-import { getWeather } from '../services/geminiService';
+import { getWeatherAlert } from '../lib/tools/weather';
 import { WeatherData, CachedWeatherData } from '../types';
 
 interface DashboardProps {
@@ -55,7 +55,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onQuickAction, onNavigate, langua
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         try {
-          const data = await getWeather(position.coords.latitude, position.coords.longitude);
+          const result = await getWeatherAlert(position.coords.latitude, position.coords.longitude);
+          if (!result.ok) throw new Error(result.summary);
+          const data = result.data.weather;
           setWeather(data);
           
           // Cache the weather data with timestamp and location
@@ -136,6 +138,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onQuickAction, onNavigate, langua
                <Sun className="w-5 h-5 text-orange-500 mr-2" />
             )}
             {isHindi ? "आज का मौसम" : "Today's Weather"}
+            <span className="ml-2 text-xs font-normal text-slate-400">Open-Meteo</span>
           </h2>
           <div className="flex items-center gap-2">
             {weather && (
