@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Languages, Shield, Info, Bell, Moon, ChevronRight, X } from 'lucide-react';
+import type { FieldPrefs } from '../lib/field/prefs';
+import { t } from '../lib/i18n';
 
 interface SettingsProps {
   language: 'en-US' | 'hi-IN';
@@ -8,6 +10,8 @@ interface SettingsProps {
   onToggleDarkMode: () => void;
   weatherAlerts: boolean;
   onToggleWeatherAlerts: () => void;
+  field: FieldPrefs;
+  onField: (prefs: FieldPrefs) => void;
 }
 
 const Settings: React.FC<SettingsProps> = ({ 
@@ -16,7 +20,9 @@ const Settings: React.FC<SettingsProps> = ({
   darkMode, 
   onToggleDarkMode,
   weatherAlerts,
-  onToggleWeatherAlerts
+  onToggleWeatherAlerts,
+  field,
+  onField,
 }) => {
   const isHindi = language === 'hi-IN';
   const [showPrivacy, setShowPrivacy] = useState(false);
@@ -185,6 +191,44 @@ const Settings: React.FC<SettingsProps> = ({
             </div>
           </div>
         ))}
+      </div>
+
+      <div className="mt-6 bg-white dark:bg-slate-800 rounded-2xl border border-gray-100 dark:border-slate-700 shadow-sm p-6 space-y-4">
+        <h3 className="text-sm font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wider">{t(language, 'field_title')}</h3>
+        {([
+          ['lowBandwidth', 'field_low'],
+          ['highContrast', 'field_contrast'],
+          ['largeText', 'field_text'],
+          ['wakeWord', 'field_wake'],
+        ] as const).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="switch"
+            aria-checked={field[key]}
+            onClick={() => onField({ ...field, [key]: !field[key] })}
+            className="w-full min-h-14 flex items-center justify-between text-left"
+          >
+            <span className="font-medium text-slate-800 dark:text-gray-200">{t(language, label)}</span>
+            <span className={`w-10 h-6 rounded-full p-1 ${field[key] ? 'bg-agri-500' : 'bg-gray-300'}`}>
+              <span className={`block w-4 h-4 rounded-full bg-white transition-transform ${field[key] ? 'translate-x-4' : ''}`} />
+            </span>
+          </button>
+        ))}
+        <p className="text-xs text-slate-500">{t(language, 'field_wake_help')}</p>
+        <label className="block">
+          <span className="font-medium text-slate-800 dark:text-gray-200">{t(language, 'field_rate')} ({field.speechRate.toFixed(1)})</span>
+          <input
+            type="range"
+            min={0.8}
+            max={1.4}
+            step={0.1}
+            value={field.speechRate}
+            onChange={(event) => onField({ ...field, speechRate: Number(event.target.value) })}
+            className="w-full min-h-14"
+          />
+          <span className="text-xs text-slate-500">{t(language, 'field_rate_help')}</span>
+        </label>
       </div>
 
       {/* Privacy Policy Modal */}

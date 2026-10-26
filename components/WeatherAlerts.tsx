@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { AlertTriangle, Loader2, Cloud, Wind, Snowflake, Bug } from 'lucide-react';
+import { getWeatherAlert } from '../lib/tools/weather';
 import { WeatherAlert } from '../types';
 
 interface WeatherAlertsProps {
@@ -10,19 +11,17 @@ const WeatherAlerts: React.FC<WeatherAlertsProps> = ({ language }) => {
   const isHindi = language === 'hi-IN';
   const [alerts, setAlerts] = useState<WeatherAlert[]>([]);
   const [loading, setLoading] = useState(false);
+  const [fetched, setFetched] = useState(false);
 
-  const mockAlerts: WeatherAlert[] = [
-    { type: 'frost', severity: 'high', message: 'Frost warning expected next 3 days', date: new Date().toLocaleDateString(), recommendation: 'Cover crops, use irrigation' },
-    { type: 'storm', severity: 'medium', message: 'Heavy rain expected in 2 days', date: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toLocaleDateString(), recommendation: 'Harvest mature crops, secure loose items' },
-    { type: 'pest', severity: 'high', message: 'Pest season approaching', date: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toLocaleDateString(), recommendation: 'Apply preventive pesticides' },
-  ];
-
-  const handleFetch = async () => {
+  const handleFetch = () => {
+    if (!navigator.geolocation) return;
     setLoading(true);
-    setTimeout(() => {
-      setAlerts(mockAlerts);
+    navigator.geolocation.getCurrentPosition(async (position) => {
+      const result = await getWeatherAlert(position.coords.latitude, position.coords.longitude);
+      setAlerts(result.data.alerts);
+      setFetched(true);
       setLoading(false);
-    }, 1000);
+    }, () => setLoading(false));
   };
 
   const getIcon = (type: string) => {
@@ -42,7 +41,7 @@ const WeatherAlerts: React.FC<WeatherAlertsProps> = ({ language }) => {
           <AlertTriangle className="w-8 h-8 mr-3" />
           <h1 className="text-3xl font-bold">{isHindi ? "मौसम सचेतनी" : "Weather Alerts"}</h1>
         </div>
-        <p className="text-orange-100">{isHindi ? "गंभीर मौसम, ठंढ और कीट चेतावनी प्राप्त करें" : "Get alerts for severe weather, frost, and pest threats"}</p>
+        <p className="text-orange-100">{isHindi ? "Open-Meteo से ठंढ, बारिश और तेज़ हवा की चेतावनी" : "Frost, rain, and high-wind alerts from Open-Meteo"}</p>
       </div>
 
       <button
@@ -59,6 +58,12 @@ const WeatherAlerts: React.FC<WeatherAlertsProps> = ({ language }) => {
           isHindi ? "चेतावनी प्राप्त करें" : "Fetch Alerts"
         )}
       </button>
+
+      {fetched && alerts.length === 0 && !loading && (
+        <p className="text-sm text-slate-600 dark:text-slate-300">
+          {isHindi ? "इस रीडिंग में ठंढ, भारी बारिश या तेज़ हवा नहीं है। स्रोत: Open-Meteo।" : "No frost, heavy rain, or high wind in this reading. Source: Open-Meteo."}
+        </p>
+      )}
 
       {alerts.length > 0 && (
         <div className="space-y-3">

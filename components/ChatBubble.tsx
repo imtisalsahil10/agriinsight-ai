@@ -58,7 +58,7 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({ message }) => {
           {!isUser && (
             <button 
               onClick={handleSpeak}
-              className="absolute top-2 right-2 p-1.5 text-gray-400 hover:text-agri-600 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-full transition-all opacity-0 group-hover:opacity-100"
+              className="absolute top-2 right-2 p-1.5 min-h-11 min-w-11 flex items-center justify-center text-gray-400 hover:text-agri-600 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-full transition-colors"
               title="Read Aloud"
             >
               {isSpeaking ? <Square className="w-4 h-4 fill-current" /> : <Volume2 className="w-4 h-4" />}

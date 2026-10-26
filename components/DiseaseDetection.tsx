@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Leaf, Upload, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import { presentDisease } from '../lib/tools/disease';
 import { DiseaseAnalysis } from '../types';
 
 interface DiseaseDetectionProps {
@@ -29,7 +30,7 @@ const DiseaseDetection: React.FC<DiseaseDetectionProps> = ({ language, onAnalyze
     setLoading(true);
     try {
       const result = await onAnalyze(selectedImage);
-      if (result) setAnalysis(result);
+      if (result) setAnalysis(presentDisease(result));
     } catch (err) {
       console.error('Analysis failed:', err);
     } finally {
@@ -116,6 +117,18 @@ const DiseaseDetection: React.FC<DiseaseDetectionProps> = ({ language, onAnalyze
               {analysis.chemicalRemedies.map((r, i) => <li key={i}>• {r}</li>)}
             </ul>
           </div>
+          {analysis.kvkLine && (
+            <div className="bg-amber-50 border border-amber-200 p-4 rounded-xl md:col-span-2">
+              <p className="text-sm font-semibold text-amber-950">{analysis.kvkLine}</p>
+              {analysis.dosageNote && <p className="text-sm text-amber-900 mt-2">{analysis.dosageNote}</p>}
+              {analysis.precautions && (
+                <ul className="mt-2 text-sm space-y-1">
+                  {analysis.precautions.map((item) => <li key={item}>• {item}</li>)}
+                </ul>
+              )}
+              <p className="text-xs mt-2 text-slate-500">Source: model</p>
+            </div>
+          )}
           <div className="bg-white dark:bg-slate-800 p-4 rounded-xl">
             <h3 className="font-bold mb-2">{isHindi ? "रोकथाम" : "Prevention Tips"}</h3>
             <ul className="space-y-1 text-sm">

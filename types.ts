@@ -50,6 +50,11 @@ export interface DiseaseAnalysis {
   organicRemedies: string[];
   chemicalRemedies: string[];
   preventionTips: string[];
+  dosageNote?: string;
+  precautions?: string[];
+  kvkLine?: string;
+  source?: 'model';
+  confidence?: number;
 }
 
 // Soil Health
@@ -147,4 +152,4 @@ export interface YieldFactor {
 
 export type LoadingState = 'idle' | 'loading' | 'analyzing' | 'error';
 export type Language = 'en-US' | 'hi-IN';
-export type ViewState = 'dashboard' | 'chat' | 'video' | 'disease' | 'soil' | 'irrigation' | 'market' | 'alerts' | 'calendar' | 'fertilizer' | 'locations' | 'yield' | 'settings';
+export type ViewState = 'voice' | 'dashboard' | 'chat' | 'video' | 'disease' | 'soil' | 'irrigation' | 'market' | 'alerts' | 'calendar' | 'fertilizer' | 'locations' | 'yield' | 'settings';

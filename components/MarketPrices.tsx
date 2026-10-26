@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { TrendingUp, Loader2, ArrowUp, ArrowDown } from 'lucide-react';
+import DemoBadge from './voice/DemoBadge';
+import { getMarketPrices } from '../lib/tools/market';
 import { CropPrice } from '../types';
 
 interface MarketPricesProps {
@@ -13,28 +15,10 @@ const MarketPrices: React.FC<MarketPricesProps> = ({ language }) => {
   const [region, setRegion] = useState('Punjab');
   const [cropFilters, setCropFilters] = useState('');
 
-  const mockPrices: CropPrice[] = [
-    { cropName: 'Wheat', currentPrice: 2500, minPrice: 2300, maxPrice: 2700, trend: 'up', region: 'Punjab', date: new Date().toLocaleDateString() },
-    { cropName: 'Rice', currentPrice: 4200, minPrice: 4000, maxPrice: 4500, trend: 'stable', region: 'Punjab', date: new Date().toLocaleDateString() },
-    { cropName: 'Corn', currentPrice: 1800, minPrice: 1700, maxPrice: 1900, trend: 'down', region: 'Punjab', date: new Date().toLocaleDateString() },
-    { cropName: 'Cotton', currentPrice: 5500, minPrice: 5300, maxPrice: 5800, trend: 'up', region: 'Punjab', date: new Date().toLocaleDateString() },
-  ];
-
-  const handleFetch = async () => {
+  const handleFetch = () => {
     setLoading(true);
-    setTimeout(() => {
-      const selectedCrops = cropFilters
-        .split(',')
-        .map((c) => c.trim().toLowerCase())
-        .filter(Boolean);
-
-      const filtered = selectedCrops.length
-        ? mockPrices.filter((p) => selectedCrops.includes(p.cropName.toLowerCase()))
-        : mockPrices;
-
-      setPrices(filtered.map((p) => ({ ...p, region })));
-      setLoading(false);
-    }, 1000);
+    setPrices(getMarketPrices(region, cropFilters).data);
+    setLoading(false);
   };
 
   return (
@@ -87,6 +71,8 @@ const MarketPrices: React.FC<MarketPricesProps> = ({ language }) => {
       </div>
 
       {prices.length > 0 && (
+        <div className="space-y-4">
+          <DemoBadge language={language} />
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {prices.map((price, i) => (
             <div key={i} className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-200 dark:border-slate-700 transition-colors">
@@ -111,6 +97,7 @@ const MarketPrices: React.FC<MarketPricesProps> = ({ language }) => {
               </div>
             </div>
           ))}
+        </div>
         </div>
       )}
     </div>

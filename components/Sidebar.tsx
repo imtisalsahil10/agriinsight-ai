@@ -1,28 +1,31 @@
 import React from 'react';
-import { Home, MessageSquare, Settings, Sprout, Youtube, Leaf, Wind, Droplets, TrendingUp, Calendar, Beaker, Map, Zap } from 'lucide-react';
-import { ViewState } from '../types';
+import { Home, MessageSquare, Settings, Sprout, Youtube, Leaf, Wind, Droplets, TrendingUp, Calendar, Beaker, Map, Zap, Mic } from 'lucide-react';
+import { t, type MessageKey } from '../lib/i18n';
+import { Language, ViewState } from '../types';
 
 interface SidebarProps {
   currentView: ViewState;
+  language: Language;
   onViewChange: (view: ViewState) => void;
   isOpen: boolean;
   onClose: () => void;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, isOpen, onClose }) => {
-  const navItems = [
-    { view: 'dashboard' as ViewState, label: 'Dashboard', icon: Home, color: 'agri' },
-    { view: 'disease' as ViewState, label: 'Disease Detection', icon: Leaf, color: 'red' },
-    { view: 'soil' as ViewState, label: 'Soil Analysis', icon: Sprout, color: 'green' },
-    { view: 'irrigation' as ViewState, label: 'Irrigation', icon: Droplets, color: 'blue' },
-    { view: 'market' as ViewState, label: 'Market Prices', icon: TrendingUp, color: 'purple' },
-    { view: 'alerts' as ViewState, label: 'Weather Alerts', icon: Wind, color: 'orange' },
-    { view: 'calendar' as ViewState, label: 'Crop Calendar', icon: Calendar, color: 'indigo' },
-    { view: 'fertilizer' as ViewState, label: 'Fertilizer', icon: Beaker, color: 'lime' },
-    { view: 'locations' as ViewState, label: 'Multi-Farm', icon: Map, color: 'emerald' },
-    { view: 'yield' as ViewState, label: 'Yield Predict', icon: Zap, color: 'yellow' },
-    { view: 'video' as ViewState, label: 'Video Analysis', icon: Youtube, color: 'rose' },
-    { view: 'chat' as ViewState, label: 'Chat', icon: MessageSquare, color: 'agri' },
+const Sidebar: React.FC<SidebarProps> = ({ currentView, language, onViewChange, isOpen, onClose }) => {
+  const navItems: Array<{ view: ViewState; label: MessageKey; icon: typeof Mic; color: string }> = [
+    { view: 'voice', label: 'nav_talk', icon: Mic, color: 'agri' },
+    { view: 'dashboard', label: 'nav_dashboard', icon: Home, color: 'agri' },
+    { view: 'disease', label: 'nav_disease', icon: Leaf, color: 'red' },
+    { view: 'soil', label: 'nav_soil', icon: Sprout, color: 'green' },
+    { view: 'irrigation', label: 'nav_irrigation', icon: Droplets, color: 'blue' },
+    { view: 'market', label: 'nav_market', icon: TrendingUp, color: 'purple' },
+    { view: 'alerts', label: 'nav_alerts', icon: Wind, color: 'orange' },
+    { view: 'calendar', label: 'nav_calendar', icon: Calendar, color: 'indigo' },
+    { view: 'fertilizer', label: 'nav_fertilizer', icon: Beaker, color: 'lime' },
+    { view: 'locations', label: 'nav_locations', icon: Map, color: 'emerald' },
+    { view: 'yield', label: 'nav_yield', icon: Zap, color: 'yellow' },
+    { view: 'video', label: 'nav_video', icon: Youtube, color: 'rose' },
+    { view: 'chat', label: 'nav_chat', icon: MessageSquare, color: 'agri' },
   ];
 
   const getColorClasses = (color: string) => {
@@ -66,27 +69,27 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, isOpen, on
                 <button
                   key={item.view}
                   onClick={() => { onViewChange(item.view); onClose(); }}
-                  className={`flex items-center w-full px-4 py-2.5 rounded-lg transition-colors text-sm ${
+                  className={`flex items-center w-full px-4 min-h-14 rounded-lg transition-colors text-sm ${
                     isActive
                       ? `${colors.bg} ${colors.text}`
                       : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700'
                   }`}
                 >
                   <Icon className="w-4 h-4 mr-3 flex-shrink-0" />
-                  <span className="font-medium truncate">{item.label}</span>
+                  <span className="font-medium truncate">{t(language, item.label)}</span>
                 </button>
               );
             })}
             <button
               onClick={() => { onViewChange('settings'); onClose(); }}
-              className={`flex items-center w-full px-4 py-2.5 rounded-lg transition-colors text-sm mt-4 border-t border-gray-100 dark:border-slate-700 pt-4 ${
+              className={`flex items-center w-full px-4 min-h-14 rounded-lg transition-colors text-sm mt-4 border-t border-gray-100 dark:border-slate-700 ${
                 currentView === 'settings'
                   ? 'bg-gray-100 dark:bg-slate-700 text-gray-900 dark:text-white'
                   : 'text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700'
               }`}
             >
               <Settings className="w-4 h-4 mr-3 flex-shrink-0" />
-              <span className="font-medium">Settings</span>
+              <span className="font-medium">{t(language, 'nav_settings')}</span>
             </button>
           </nav>
 
