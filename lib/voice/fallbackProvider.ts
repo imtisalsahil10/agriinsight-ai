@@ -2,6 +2,7 @@ import type { Language } from '../../types';
 import { loadFieldPrefs } from '../field/prefs';
 import { VoiceFailure } from './errors';
 import type { ProviderEvent, VoiceMode, VoiceProvider } from './types';
+import { pickSpokenVoice } from './spokenVoice';
 import { stripWakeWord } from './wakeWord';
 import { getSpeechRecognition, isSecureVoiceContext, transcriptFromResults, type SpeechRecognitionLike } from './webSpeech';
 
@@ -236,10 +237,8 @@ export function createFallbackProvider(options: FallbackProviderOptions): VoiceP
       utterance.lang = language;
       utterance.rate = loadFieldPrefs().speechRate;
       if (cachedVoices.length === 0) cachedVoices = window.speechSynthesis.getVoices();
-      const voices = cachedVoices;
-      const match = voices.find((voice) => voice.lang === language)
-        ?? voices.find((voice) => voice.lang.toLowerCase().startsWith(language.slice(0, 2).toLowerCase()));
-      if (match) utterance.voice = match;
+      const match = pickSpokenVoice(cachedVoices, language);
+      if (match) utterance.voice = match as SpeechSynthesisVoice;
       let ended = false;
       const finish = (): void => {
         if (ended) return;

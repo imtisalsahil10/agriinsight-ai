@@ -22,6 +22,7 @@ import { createVoiceProvider } from './lib/voice/createProvider';
 import { isLeafRequest } from './lib/voice/leaf';
 import { shouldReleaseVoice } from './lib/voice/lifecycle';
 import { createVoiceSession } from './lib/voice/session';
+import { pickSpokenVoice } from './lib/voice/spokenVoice';
 import { affectsPresentation, initialState } from './lib/voice/sessionMachine';
 import type { SessionState, VoiceSession } from './lib/voice/types';
 import ChatBubble from './components/ChatBubble';
@@ -386,6 +387,8 @@ const AppShell: React.FC = () => {
       const utterance = new SpeechSynthesisUtterance(briefing.script);
       utterance.lang = languageRef.current;
       utterance.rate = loadFieldPrefs().speechRate;
+      const voice = pickSpokenVoice(window.speechSynthesis.getVoices(), languageRef.current);
+      if (voice) utterance.voice = voice as SpeechSynthesisVoice;
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utterance);
     }

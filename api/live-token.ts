@@ -1,5 +1,5 @@
-import { dispatch } from '../server/dispatch';
-import { clientIp } from '../server/http';
+import { dispatch } from '../server/dispatch.js';
+import { clientIp } from '../server/http.js';
 
 interface ApiRequest {
   method?: string;

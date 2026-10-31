@@ -10,14 +10,14 @@ export interface LanguageOption {
 }
 
 export const LANGUAGES: LanguageOption[] = [
-  { id: 'en', bcp47: 'en-US', label: 'English', enabled: true, geminiVoice: 'Puck', stt: 'en-US' },
+  { id: 'en', bcp47: 'en-US', label: 'English', enabled: true, geminiVoice: 'Charon', stt: 'en-US' },
   { id: 'hi', bcp47: 'hi-IN', label: 'हिन्दी', enabled: true, geminiVoice: 'Kore', stt: 'hi-IN' },
-  { id: 'te', bcp47: 'te-IN', label: 'తెలుగు', enabled: false, geminiVoice: 'Puck', stt: 'te-IN' },
-  { id: 'ta', bcp47: 'ta-IN', label: 'தமிழ்', enabled: false, geminiVoice: 'Puck', stt: 'ta-IN' },
-  { id: 'mr', bcp47: 'mr-IN', label: 'मराठी', enabled: false, geminiVoice: 'Puck', stt: 'mr-IN' },
-  { id: 'pa', bcp47: 'pa-IN', label: 'ਪੰਜਾਬੀ', enabled: false, geminiVoice: 'Puck', stt: 'pa-IN' },
+  { id: 'te', bcp47: 'te-IN', label: 'తెలుగు', enabled: false, geminiVoice: 'Charon', stt: 'te-IN' },
+  { id: 'ta', bcp47: 'ta-IN', label: 'தமிழ்', enabled: false, geminiVoice: 'Charon', stt: 'ta-IN' },
+  { id: 'mr', bcp47: 'mr-IN', label: 'मराठी', enabled: false, geminiVoice: 'Charon', stt: 'mr-IN' },
+  { id: 'pa', bcp47: 'pa-IN', label: 'ਪੰਜਾਬੀ', enabled: false, geminiVoice: 'Charon', stt: 'pa-IN' },
 ];
 
 export function voiceFor(bcp47: string): string {
-  return LANGUAGES.find((language) => language.bcp47 === bcp47)?.geminiVoice ?? 'Puck';
+  return LANGUAGES.find((language) => language.bcp47 === bcp47)?.geminiVoice ?? 'Charon';
 }

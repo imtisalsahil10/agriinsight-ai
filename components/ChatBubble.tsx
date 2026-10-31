@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Message } from '../types';
 import { Bot, User, ExternalLink, Volume2, Square } from 'lucide-react';
+import { pickSpokenVoice } from '../lib/voice/spokenVoice';
 import MarkdownRenderer from './MarkdownRenderer';
 
 interface ChatBubbleProps {
@@ -25,10 +26,9 @@ const ChatBubble: React.FC<ChatBubbleProps> = ({ message }) => {
     utterance.lang = hasHindi ? 'hi-IN' : 'en-US';
     
     // Try to find a matching voice
-    const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find(v => v.lang.includes(utterance.lang));
+    const preferredVoice = pickSpokenVoice(window.speechSynthesis.getVoices(), utterance.lang);
     if (preferredVoice) {
-      utterance.voice = preferredVoice;
+      utterance.voice = preferredVoice as SpeechSynthesisVoice;
     }
 
     utterance.onend = () => setIsSpeaking(false);

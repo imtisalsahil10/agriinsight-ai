@@ -188,7 +188,7 @@ describe('microphone and fallback', () => {
   });
 
   it('uses the Hindi voice for Hindi and the English voice for English', () => {
-    expect(voiceFor('en-US')).toBe('Puck');
+    expect(voiceFor('en-US')).toBe('Charon');
     expect(voiceFor('hi-IN')).toBe('Kore');
   });
 });

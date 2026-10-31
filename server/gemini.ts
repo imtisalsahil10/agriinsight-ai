@@ -2,7 +2,7 @@ import { GoogleGenAI, type GenerateContentResponse } from '@google/genai';
 import type { ChatStreamEvent } from '../lib/sse';
 import type { DiseaseAnalysis, Source, WeatherData } from '../types';
 import type { GeminiRequest } from './schemas';
-import { safeErrorMessage } from './http';
+import { safeErrorMessage } from './http.js';
 
 const MODEL = 'gemini-3.8-flash';
 

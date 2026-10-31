@@ -1,9 +1,9 @@
-import { notifySummary, syncFarm, twilioVoice } from './extras';
-import { geminiRequestSchema } from './schemas';
-import { analyzeDisease, generateChat, generateChatStream, getWeather } from './gemini';
-import { createLiveToken } from './liveToken';
-import { GEMINI_LIMIT, LIVE_TOKEN_LIMIT, rateLimit } from './rateLimit';
-import { safeErrorMessage, type ApiResult } from './http';
+import { notifySummary, syncFarm, twilioVoice } from './extras.js';
+import { geminiRequestSchema } from './schemas.js';
+import { analyzeDisease, generateChat, generateChatStream, getWeather } from './gemini.js';
+import { createLiveToken } from './liveToken.js';
+import { GEMINI_LIMIT, LIVE_TOKEN_LIMIT, rateLimit } from './rateLimit.js';
+import { safeErrorMessage, type ApiResult } from './http.js';
 
 export type ApiRoute = 'gemini' | 'live-token' | 'farm' | 'notify' | 'twilio-voice';
 

@@ -1,9 +1,9 @@
 import path from 'path';
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
-import { dispatch, type ApiRoute } from './server/dispatch';
-import { clientIp, emitResult } from './server/http';
-import { readJsonBody } from './server/readBody';
+import { dispatch, type ApiRoute } from './server/dispatch.js';
+import { clientIp, emitResult } from './server/http.js';
+import { readJsonBody } from './server/readBody.js';
 
 function apiDevPlugin(): Plugin {
   return {
