@@ -1,4 +1,4 @@
-import type { SessionState, VoiceMode } from './types';
+import type { SessionState, VoiceConnection, VoiceMode } from './types';
 
 export type MachineEvent =
   | { type: 'start' }
@@ -12,6 +12,7 @@ export type MachineEvent =
   | { type: 'barge-in' }
   | { type: 'fail'; message: string }
   | { type: 'level'; level: number }
+  | { type: 'connection'; status: VoiceConnection }
   | { type: 'set-mode'; mode: VoiceMode };
 
 export interface TransitionResult {
@@ -23,6 +24,7 @@ export function initialState(mode: VoiceMode = 'push-to-talk'): SessionState {
   return {
     phase: 'idle',
     mode,
+    connection: 'open',
     partialTranscript: '',
     finalTranscript: '',
     assistantText: '',
@@ -40,6 +42,18 @@ function reject(state: SessionState): TransitionResult {
   return { state, accepted: false };
 }
 
+/** Level-only updates must not re-render the page tree. */
+export function affectsPresentation(current: SessionState, next: SessionState): boolean {
+  return current.phase !== next.phase
+    || current.mode !== next.mode
+    || current.connection !== next.connection
+    || current.partialTranscript !== next.partialTranscript
+    || current.finalTranscript !== next.finalTranscript
+    || current.assistantText !== next.assistantText
+    || current.error !== next.error
+    || current.announcingError !== next.announcingError;
+}
+
 function clampLevel(level: number): number {
   if (!Number.isFinite(level)) return 0;
   return Math.min(1, Math.max(0, level));
@@ -49,12 +63,15 @@ export function transition(state: SessionState, event: MachineEvent): Transition
   switch (event.type) {
     case 'set-mode':
       return ok({ ...state, mode: event.mode });
+    case 'connection':
+      return ok({ ...state, connection: event.status });
     case 'level':
       return ok({ ...state, audioLevel: clampLevel(event.level) });
     case 'stop':
       return ok({
         ...state,
         phase: 'idle',
+        connection: 'open',
         partialTranscript: '',
         audioLevel: 0,
         announcingError: false,

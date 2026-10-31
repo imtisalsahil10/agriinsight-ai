@@ -48,7 +48,7 @@ Open http://localhost:3000. `npm test` runs Vitest. `npx tsc --noEmit` typecheck
 2. **Shell language.** Header, sidebar, chat errors, and voice errors use English and Hindi. Telugu, Tamil, Marathi, and Punjabi are listed and disabled. Feature screens still use their own copy.
 3. **Tools.** Weather is Open-Meteo. Market, irrigation, soil, and yield are formulas and show a Demo data badge. Disease adds dose units and a KVK line when a chemical is named.
 4. **Fallback voice.** Web Speech, streaming text, and speech synthesis, with a push-to-talk and hands-free session.
-5. **Gemini Live.** `POST /api/live-token`, then `ai.live.connect` to `gemini-3.8-live` on `v1beta`. Input is 16 kHz PCM. Output is 24 kHz PCM. Server voice activity detection stays on. The interrupt button stops playback and sends `sendClientContent({ turnComplete: true })`.
+5. **Gemini Live.** `POST /api/live-token`, then `ai.live.connect` to `gemini-3.8-live` on `v1beta`. Input is 16 kHz PCM. Output is 24 kHz PCM. Server voice activity detection stays on. The interrupt button stops playback. It does not start another turn.
 6. **Farm memory.** Profile, notes, and reminders live in `localStorage`. `POST /api/farm` syncs only when Upstash or Supabase env vars exist. The morning briefing is a button, not a cron job. Reminders notify only while the page is open.
 7. **Leaf camera.** “Check my leaf” or “check my crop” opens a shutter. The photo is scaled down, then sent to the disease tool. “Why this advice?” shows the inputs, source, and confidence.
 8. **Field use.** Manifest, production service worker for the app shell and last advice, offline banner, low bandwidth, high contrast, large text, speech-rate slider, and 56px targets. The favicon is `/favicon.svg`.

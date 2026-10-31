@@ -44,6 +44,9 @@ export function createVoiceSession(options: VoiceSessionOptions): VoiceSession {
   let speechToken = 0;
   let announcing = false;
   let liveSaved = false;
+  let starting = false;
+  let lastFinalText = '';
+  let lastFinalAt = 0;
   const listeners = new Set<(state: SessionState) => void>();
 
   function ownsTurns(): boolean {
@@ -242,8 +245,19 @@ export function createVoiceSession(options: VoiceSessionOptions): VoiceSession {
       case 'level':
         dispatch({ type: 'level', level: event.level });
         break;
+      case 'connection':
+        dispatch({ type: 'connection', status: event.status });
+        break;
       case 'final':
         if (suppressMic) return;
+        {
+          const heard = event.text.trim();
+          if (heard && heard === lastFinalText && now() - lastFinalAt < 600) return;
+          if (heard) {
+            lastFinalText = heard;
+            lastFinalAt = now();
+          }
+        }
         if (options.classify?.(event.text.trim())) {
           void routeLocal(event.text);
           return;
@@ -316,20 +330,30 @@ export function createVoiceSession(options: VoiceSessionOptions): VoiceSession {
       return () => listeners.delete(listener);
     },
     async start() {
-      if (disposed) return;
+      if (disposed || starting) return;
       if (machine.phase === 'thinking' || machine.phase === 'speaking') {
         this.bargeIn();
         return;
       }
       if (machine.phase === 'listening') return;
+      starting = true;
       suppressMic = false;
+      dispatch({ type: 'connection', status: 'connecting' });
       try {
         await options.provider.start();
-        if (disposed) return;
+        if (disposed || suppressMic) {
+          options.provider.suspend?.();
+          dispatch({ type: 'connection', status: 'open' });
+          return;
+        }
+        dispatch({ type: 'connection', status: 'open' });
         dispatch({ type: 'start' });
       } catch (error) {
         if (disposed) return;
+        dispatch({ type: 'connection', status: 'open' });
         announce(voiceErrorMessage(failureCode(error), options.language()));
+      } finally {
+        starting = false;
       }
     },
     release() {

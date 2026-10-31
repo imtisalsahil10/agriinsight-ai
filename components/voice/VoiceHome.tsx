@@ -10,7 +10,7 @@ import type { SessionState, VoiceMode } from '../../lib/voice/types';
 import LiveTranscript from './LiveTranscript';
 import MicButton from './MicButton';
 import ToolCard from './ToolCard';
-import Waveform from './Waveform';
+import { VoiceMeter } from './Waveform';
 
 interface VoiceHomeProps {
   language: Language;
@@ -21,9 +21,11 @@ interface VoiceHomeProps {
   onMode: (mode: VoiceMode) => void;
   onOpenDashboard: () => void;
   onBriefing: () => void;
+  briefingBusy?: boolean;
+  readLevel: () => number;
 }
 
-const VoiceHome: React.FC<VoiceHomeProps> = ({ language, messages, state, tools, onMic, onMode, onOpenDashboard, onBriefing }) => {
+const VoiceHome: React.FC<VoiceHomeProps> = ({ language, messages, state, tools, onMic, onMode, onOpenDashboard, onBriefing, briefingBusy = false, readLevel }) => {
   const copy = voiceCopy(language);
   const latest = [...messages].reverse().find((message) => message.role === 'model' && message.id !== 'welcome')?.content ?? '';
   usePageAssistant({
@@ -35,7 +37,7 @@ const VoiceHome: React.FC<VoiceHomeProps> = ({ language, messages, state, tools,
     missing: () => [],
     run: async () => ({ ok: false, summary: explainView('voice', language) }),
   });
-  const status = statusLine(copy, state.phase, null);
+  const status = statusLine(copy, state.phase, null, state.connection);
   const micLabel = state.phase === 'listening'
     ? copy.micSend
     : state.phase === 'thinking' || state.phase === 'speaking'
@@ -58,7 +60,7 @@ const VoiceHome: React.FC<VoiceHomeProps> = ({ language, messages, state, tools,
           </p>
         )}
 
-        <Waveform level={state.audioLevel} active={state.phase === 'listening' || state.phase === 'speaking'} />
+        <VoiceMeter readLevel={readLevel} active={state.phase === 'listening' || state.phase === 'speaking'} />
         <p id="voice-status" className="text-center text-sm text-slate-600 dark:text-slate-300 min-h-5 mb-4">
           {status}
         </p>
@@ -90,11 +92,13 @@ const VoiceHome: React.FC<VoiceHomeProps> = ({ language, messages, state, tools,
         </div>
 
         <div className="flex flex-col items-center gap-4">
-          <MicButton phase={state.phase} label={micLabel} describedBy="voice-status" onClick={onMic} />
+          <MicButton phase={state.phase} label={micLabel} describedBy="voice-status" pending={state.connection === 'connecting'} onClick={onMic} />
           <button
             type="button"
             onClick={onBriefing}
-            className="min-h-14 px-5 inline-flex items-center gap-2 rounded-full border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 font-semibold touch-manipulation"
+            disabled={briefingBusy}
+            aria-busy={briefingBusy}
+            className="min-h-14 px-5 inline-flex items-center gap-2 rounded-full border border-slate-300 dark:border-slate-600 text-slate-800 dark:text-slate-100 font-semibold touch-manipulation active:scale-[0.98] disabled:opacity-60"
           >
             <Sunrise className="w-5 h-5" />
             {t(language, 'voice_briefing')}

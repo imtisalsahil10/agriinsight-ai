@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Send, Image as ImageIcon, X, Loader2, Menu, Languages } from 'lucide-react';
 import { generateResponse, streamResponse, analyzeDiseaseFromImage } from './services/geminiService';
 import { Message, LoadingState, Language, ViewState } from './types';
@@ -20,8 +20,9 @@ import type { ToolResult } from './lib/tools/types';
 import { VOICE_PROMPT_HINT } from './lib/voice/copy';
 import { createVoiceProvider } from './lib/voice/createProvider';
 import { isLeafRequest } from './lib/voice/leaf';
+import { shouldReleaseVoice } from './lib/voice/lifecycle';
 import { createVoiceSession } from './lib/voice/session';
-import { initialState } from './lib/voice/sessionMachine';
+import { affectsPresentation, initialState } from './lib/voice/sessionMachine';
 import type { SessionState, VoiceSession } from './lib/voice/types';
 import ChatBubble from './components/ChatBubble';
 import Sidebar from './components/Sidebar';
@@ -104,6 +105,7 @@ const AppShell: React.FC = () => {
   const [online, setOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine));
   const [lastAdvice, setLastAdvice] = useState('');
   const [reminderText, setReminderText] = useState<string | null>(null);
+  const [briefingBusy, setBriefingBusy] = useState(false);
   
   // Settings State
   const [darkMode, setDarkMode] = useState(false);
@@ -114,6 +116,13 @@ const AppShell: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const sessionRef = useRef<VoiceSession | null>(null);
+  const levelRef = useRef(0);
+  const loadingRef = useRef<LoadingState>('idle');
+  const inputRef = useRef(inputText);
+  const imageStateRef = useRef(selectedImage);
+  const briefingLock = useRef(false);
+  inputRef.current = inputText;
+  imageStateRef.current = selectedImage;
   const languageRef = useRef(language);
   const messagesRef = useRef(messages);
   const viewRef = useRef(view);
@@ -196,13 +205,28 @@ const AppShell: React.FC = () => {
       },
     });
     sessionRef.current = session;
-    const unsubscribe = session.subscribe(setVoiceState);
+    const unsubscribe = session.subscribe((next) => {
+      levelRef.current = next.audioLevel;
+      setVoiceState((current) => (affectsPresentation(current, next) ? next : current));
+    });
     return () => {
       unsubscribe();
       session.dispose();
       sessionRef.current = null;
     };
   }, [remember]);
+
+  const readLevel = useCallback(() => levelRef.current, []);
+  const closeSidebar = useCallback(() => setIsSidebarOpen(false), []);
+  const openSidebar = useCallback(() => setIsSidebarOpen(true), []);
+  const previousView = useRef(view);
+
+  useEffect(() => {
+    if (shouldReleaseVoice(previousView.current, view)) {
+      sessionRef.current?.stop();
+    }
+    previousView.current = view;
+  }, [view]);
 
   // Handle Dark Mode
   useEffect(() => {
@@ -249,12 +273,18 @@ const AppShell: React.FC = () => {
     return () => window.clearInterval(timer);
   }, []);
 
-  const toggleDarkMode = () => {
-    setDarkMode(!darkMode);
-  };
+  const toggleDarkMode = useCallback(() => {
+    setDarkMode((value) => !value);
+  }, []);
 
-  const toggleWeatherAlerts = async () => {
-    if (!weatherAlerts) {
+  const weatherAlertsRef = useRef(weatherAlerts);
+  weatherAlertsRef.current = weatherAlerts;
+  const saveField = useCallback((prefs: FieldPrefs) => {
+    setField(saveFieldPrefs(prefs));
+  }, []);
+
+  const toggleWeatherAlerts = useCallback(async () => {
+    if (!weatherAlertsRef.current) {
       // Request permission
       if (!('Notification' in window)) {
         alert("This browser does not support desktop notification");
@@ -269,12 +299,15 @@ const AppShell: React.FC = () => {
     } else {
       setWeatherAlerts(false);
     }
-  };
+  }, []);
 
+  const assistantBusy = useRef(false);
   const submitAssistant = useCallback(async (text: string): Promise<string | null> => {
     const host = hostRef.current;
     const trimmed = text.trim();
-    if (!host || !trimmed) return null;
+    if (!host || !trimmed || assistantBusy.current) return null;
+    assistantBusy.current = true;
+    try {
     const outcome = await runUtterance(trimmed, host);
     if (outcome?.action === 'stop') {
       sessionRef.current?.stop();
@@ -290,6 +323,7 @@ const AppShell: React.FC = () => {
       return outcome.text;
     }
     remember({ id: crypto.randomUUID(), role: 'user', content: trimmed, timestamp: Date.now() });
+    loadingRef.current = 'loading';
     setLoadingState('loading');
     try {
       const prior = messagesRef.current;
@@ -299,19 +333,31 @@ const AppShell: React.FC = () => {
       setLastAdvice(aiText);
       remember({ id: crypto.randomUUID(), role: 'model', content: aiText, sources, timestamp: Date.now() });
       sessionRef.current?.say(aiText);
+      loadingRef.current = 'idle';
       setLoadingState('idle');
       return aiText;
     } catch (error) {
       console.error(error);
       const message = t(languageRef.current, 'chat_error');
       remember({ id: crypto.randomUUID(), role: 'model', content: message, timestamp: Date.now() });
+      loadingRef.current = 'error';
       setLoadingState('error');
-      window.setTimeout(() => setLoadingState('idle'), 2000);
+      window.setTimeout(() => {
+        loadingRef.current = 'idle';
+        setLoadingState('idle');
+      }, 2000);
       return message;
+    }
+    } finally {
+      assistantBusy.current = false;
     }
   }, [remember]);
 
   const playBriefing = async () => {
+    if (briefingLock.current) return;
+    briefingLock.current = true;
+    setBriefingBusy(true);
+    try {
     const farm = loadFarm();
     if (typeof farm.latitude !== 'number' && navigator.geolocation) {
       await new Promise<void>((resolve) => {
@@ -342,6 +388,10 @@ const AppShell: React.FC = () => {
       utterance.rate = loadFieldPrefs().speechRate;
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utterance);
+    }
+    } finally {
+      briefingLock.current = false;
+      setBriefingBusy(false);
     }
   };
 
@@ -406,8 +456,10 @@ const AppShell: React.FC = () => {
       const file = e.target.files[0];
       try {
         const base64 = await fileToBase64(file);
-        setSelectedImage(base64);
-        setView('chat'); // Switch to chat when image selected
+        const prefs = loadFieldPrefs();
+        const image = await downscaleImage(base64, prefs.lowBandwidth ? 512 : 1024, prefs.lowBandwidth ? 0.5 : 0.72).catch(() => base64);
+        setSelectedImage(image);
+        setView('chat');
       } catch (err) {
         console.error("Error reading file", err);
       }
@@ -421,11 +473,14 @@ const AppShell: React.FC = () => {
     setSelectedImage(null);
   };
 
-  const sendMessage = useCallback(async (text: string = inputText) => {
-    if ((!text.trim() && !selectedImage) || loadingState !== 'idle') return;
+  const sendMessage = useCallback(async (text?: string) => {
+    const content = text ?? inputRef.current;
+    const image = imageStateRef.current;
+    if (loadingRef.current !== 'idle') return;
+    if (!content.trim() && !image) return;
 
-    // Switch to chat view if sending from dashboard
-    if (view === 'dashboard' || view === 'video' || view === 'settings') {
+    const currentView = viewRef.current;
+    if (currentView === 'dashboard' || currentView === 'video' || currentView === 'settings') {
       setView('chat');
     }
 
@@ -433,8 +488,8 @@ const AppShell: React.FC = () => {
     const newUserMessage: Message = {
       id: userMessageId,
       role: 'user',
-      content: text,
-      image: selectedImage || undefined,
+      content,
+      image: image || undefined,
       timestamp: Date.now()
     };
 
@@ -442,6 +497,7 @@ const AppShell: React.FC = () => {
     remember(newUserMessage);
     setInputText('');
     setSelectedImage(null);
+    loadingRef.current = 'loading';
     setLoadingState('loading');
     
     if (textareaRef.current) {
@@ -453,7 +509,7 @@ const AppShell: React.FC = () => {
         newUserMessage.content,
         prior,
         newUserMessage.image,
-        language
+        languageRef.current
       );
 
       remember({
@@ -463,20 +519,24 @@ const AppShell: React.FC = () => {
         sources: sources,
         timestamp: Date.now()
       });
+      loadingRef.current = 'idle';
       setLoadingState('idle');
     } catch (error) {
       console.error(error);
       remember({
         id: crypto.randomUUID(),
         role: 'model',
-        content: t(language, 'chat_error'),
+        content: t(languageRef.current, 'chat_error'),
         timestamp: Date.now()
       });
+      loadingRef.current = 'error';
       setLoadingState('error');
-      
-      setTimeout(() => setLoadingState('idle'), 2000);
+      window.setTimeout(() => {
+        loadingRef.current = 'idle';
+        setLoadingState('idle');
+      }, 2000);
     }
-  }, [inputText, selectedImage, loadingState, view, language, remember]);
+  }, [remember]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -485,29 +545,15 @@ const AppShell: React.FC = () => {
     }
   };
 
-  const toggleLanguage = () => {
+  const toggleLanguage = useCallback(() => {
     setLanguage(prev => prev === 'en-US' ? 'hi-IN' : 'en-US');
-  };
+  }, []);
 
-  // Render content based on current view
-  const renderContent = () => {
+  const featurePage = useMemo(() => {
     switch (view) {
-      case 'voice':
-        return (
-          <VoiceHome
-            language={language}
-            messages={messages}
-            state={voiceState}
-            tools={toolCards}
-            onMic={onMic}
-            onMode={(mode) => sessionRef.current?.setMode(mode)}
-            onOpenDashboard={() => setView('dashboard')}
-            onBriefing={() => { void playBriefing(); }}
-          />
-        );
       case 'dashboard':
         return (
-          <Dashboard 
+          <Dashboard
             onQuickAction={(prompt) => sendMessage(prompt)}
             onNavigate={(viewId) => setView(viewId as ViewState)}
             onAsk={(prompt) => { void submitAssistant(prompt); }}
@@ -533,14 +579,10 @@ const AppShell: React.FC = () => {
       case 'yield':
         return <YieldPrediction language={language} />;
       case 'video':
-        return (
-          <VideoAnalysis 
-            language={language}
-          />
-        );
+        return <VideoAnalysis language={language} />;
       case 'settings':
         return (
-          <Settings 
+          <Settings
             language={language}
             onToggleLanguage={toggleLanguage}
             darkMode={darkMode}
@@ -548,44 +590,24 @@ const AppShell: React.FC = () => {
             weatherAlerts={weatherAlerts}
             onToggleWeatherAlerts={toggleWeatherAlerts}
             field={field}
-            onField={(prefs) => setField(saveFieldPrefs(prefs))}
+            onField={saveField}
           />
         );
-      case 'chat':
       default:
-        return (
-          <div className="page-shell max-w-3xl">
-            <ChatBridge language={language} latest={[...messages].reverse().find((message) => message.role === 'model')?.content ?? ''} />
-            {messages.map((msg) => (
-              <ChatBubble key={msg.id} message={msg} />
-            ))}
-            
-            {loadingState === 'loading' && (
-              <div className="flex justify-start mb-6">
-                <div className="flex items-center space-x-2 bg-white dark:bg-slate-800 p-4 rounded-2xl rounded-tl-none border border-gray-100 dark:border-slate-700 shadow-sm transition-colors">
-                  <Loader2 className="w-5 h-5 text-agri-600 animate-spin" />
-                  <span className="text-sm text-gray-500 dark:text-gray-400">
-                    {t(language, 'chat_analyzing')}
-                  </span>
-                </div>
-              </div>
-            )}
-            <div ref={messagesEndRef} />
-          </div>
-        );
+        return null;
     }
-  };
+  }, [view, language, darkMode, weatherAlerts, field, sendMessage, submitAssistant, toggleLanguage, toggleDarkMode, toggleWeatherAlerts, saveField]);
 
   return (
     <div className="flex h-screen overflow-hidden overflow-x-hidden bg-slate-50 font-sans text-slate-900 transition-colors duration-200 dark:bg-slate-950 dark:text-slate-100">
       
       {/* Sidebar */}
-      <Sidebar 
+      <Sidebar
         currentView={view}
         language={language}
-        onViewChange={setView} 
-        isOpen={isSidebarOpen} 
-        onClose={() => setIsSidebarOpen(false)}
+        onViewChange={setView}
+        isOpen={isSidebarOpen}
+        onClose={closeSidebar}
       />
 
       {/* Main Content */}
@@ -594,8 +616,9 @@ const AppShell: React.FC = () => {
         {/* Header */}
         <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 px-4 py-3 flex items-center justify-between shadow-sm z-10 shrink-0 transition-colors">
           <div className="flex min-w-0 flex-1 items-center">
-            <button 
-              onClick={() => setIsSidebarOpen(true)}
+            <button
+              type="button"
+              onClick={openSidebar}
               aria-label={t(language, 'menu_open')}
               className="mr-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 md:hidden"
             >
@@ -636,7 +659,38 @@ const AppShell: React.FC = () => {
           </div>
         )}
         <main className={`flex-1 relative min-h-0 ${view === 'voice' ? 'overflow-hidden flex flex-col' : 'overflow-y-auto scroll-smooth'}`}>
-          {renderContent()}
+          {view === 'voice' ? (
+            <VoiceHome
+              language={language}
+              messages={messages}
+              state={voiceState}
+              tools={toolCards}
+              onMic={onMic}
+              onMode={(mode) => sessionRef.current?.setMode(mode)}
+              onOpenDashboard={() => setView('dashboard')}
+              onBriefing={() => { void playBriefing(); }}
+              briefingBusy={briefingBusy}
+              readLevel={readLevel}
+            />
+          ) : view === 'chat' ? (
+            <div className="page-shell max-w-3xl">
+              <ChatBridge language={language} latest={[...messages].reverse().find((message) => message.role === 'model')?.content ?? ''} />
+              {messages.map((msg) => (
+                <ChatBubble key={msg.id} message={msg} />
+              ))}
+              {loadingState === 'loading' && (
+                <div className="flex justify-start mb-6">
+                  <div className="flex items-center space-x-2 bg-white dark:bg-slate-800 p-4 rounded-2xl rounded-tl-none border border-gray-100 dark:border-slate-700 shadow-sm">
+                    <Loader2 className="w-5 h-5 text-agri-600 animate-spin" />
+                    <span className="text-sm text-gray-500 dark:text-gray-400">
+                      {t(language, 'chat_analyzing')}
+                    </span>
+                  </div>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+          ) : featurePage}
         </main>
         {leafOpen && <LeafCapture language={language} onClose={() => setLeafOpen(false)} onCapture={(dataUrl) => { void onLeaf(dataUrl); }} />}
         <GlobalAssistant
@@ -646,6 +700,7 @@ const AppShell: React.FC = () => {
           onMic={onMic}
           onStop={() => sessionRef.current?.stop()}
           onSubmit={submitAssistant}
+          readLevel={readLevel}
         />
 
         {/* Input Area - Only show in Chat view */}

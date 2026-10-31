@@ -6,12 +6,13 @@ interface MicButtonProps {
   phase: VoicePhase;
   label: string;
   describedBy?: string;
+  pending?: boolean;
   onClick: () => void;
 }
 
-const MicButton: React.FC<MicButtonProps> = ({ phase, label, describedBy, onClick }) => {
+const MicButton: React.FC<MicButtonProps> = ({ phase, label, describedBy, pending = false, onClick }) => {
   const listening = phase === 'listening';
-  const busy = phase === 'thinking';
+  const busy = pending || phase === 'thinking';
   const speaking = phase === 'speaking';
 
   return (

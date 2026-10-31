@@ -1,4 +1,5 @@
 import type { Language } from '../../types';
+import { VoiceFailure } from './errors';
 import { createFallbackProvider } from './fallbackProvider';
 import { createGeminiLiveProvider } from './geminiLiveProvider';
 import type { ProviderEvent, VoiceMode, VoiceProvider } from './types';
@@ -63,7 +64,11 @@ export function createCompositeProvider(options: VoiceProviderOptions, factories
       try {
         await live.start();
         chosen = 'live';
-      } catch {
+      } catch (error) {
+        live.dispose?.();
+        if (error instanceof VoiceFailure && (error.code === 'not-allowed' || error.code === 'audio-capture' || error.code === 'unsupported')) {
+          throw error;
+        }
         chosen = 'fallback';
         await fallback.start();
       }

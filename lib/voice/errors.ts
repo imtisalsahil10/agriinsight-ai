@@ -32,5 +32,17 @@ export class VoiceFailure extends Error {
 
 export function failureCode(error: unknown): VoiceErrorCode {
   if (error instanceof VoiceFailure) return error.code;
+  if (error instanceof Error && error.name && error.name !== 'Error') return failureFromMic(error).code;
   return 'start-failed';
+}
+
+export function failureFromMic(error: unknown): VoiceFailure {
+  const name = error instanceof Error ? error.name : '';
+  if (name === 'NotAllowedError' || name === 'PermissionDeniedError' || name === 'SecurityError') {
+    return new VoiceFailure('not-allowed');
+  }
+  if (name === 'NotFoundError' || name === 'NotReadableError' || name === 'OverconstrainedError') {
+    return new VoiceFailure('audio-capture');
+  }
+  return new VoiceFailure('start-failed');
 }

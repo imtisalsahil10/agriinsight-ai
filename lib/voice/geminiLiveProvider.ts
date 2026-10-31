@@ -3,26 +3,104 @@ import { loadFarm } from '../farm/store';
 import { voiceFor } from '../i18n';
 import { runTool, toolDeclarations } from '../tools/registry';
 import type { Language } from '../../types';
-import { VoiceFailure } from './errors';
+import { failureFromMic, VoiceFailure } from './errors';
+import {
+  downsample,
+  floatToPcm16,
+  INPUT_RATE,
+  pcm16ToBase64,
+  PcmPlayer,
+} from './pcmPlayer';
+import { MAX_RECONNECTS, reconnectDelayMs, socketClosePlan } from './reconnect';
 import type { ProviderEvent, VoiceMode, VoiceProvider } from './types';
 
 /**
  * Gemini Live in the browser.
  * Model: gemini-3.8-live
  * API version: v1beta
- * SDK: new GoogleGenAI({ apiKey: ephemeralToken, apiVersion: 'v1beta' })
- *      ai.live.connect({ model: 'gemini-3.8-live', config, callbacks })
- * Input audio: raw 16-bit little-endian PCM at 16 kHz via sendRealtimeInput({ audio })
- * Output audio: raw 16-bit little-endian PCM at 24 kHz from message.data
- * Server voice activity detection stays on. activityStart is not sent, because the
- * SDK only allows it when automatic activity detection is disabled.
- * Button barge-in stops local playback and calls sendClientContent({ turnComplete: true }).
+ * Input: 16-bit PCM at 16 kHz. Output: 16-bit PCM at 24 kHz, scheduled gaplessly.
+ * The output AudioContext is created inside the click that starts listening,
+ * before any await, so autoplay rules do not leave it suspended.
+ * Button barge-in stops local playback and drops the rest of that reply.
+ * It does not send turnComplete, which would start another generation.
  */
 
 const LIVE_MODEL = 'gemini-3.8-live';
 const LIVE_API_VERSION = 'v1beta';
-const INPUT_RATE = 16000;
-const OUTPUT_RATE = 24000;
+const BARGE_LEVEL = 0.72;
+
+const WORKLET_SOURCE = `
+class AgriCapture extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.target = 16000;
+    this.hold = new Float32Array(0);
+    this.batch = 1600;
+    this.peak = 0;
+  }
+  expand(extra) {
+    const next = new Float32Array(this.hold.length + extra.length);
+    next.set(this.hold, 0);
+    next.set(extra, this.hold.length);
+    this.hold = next;
+  }
+  take(count) {
+    const frame = new Float32Array(count);
+    frame.set(this.hold.subarray(0, count));
+    const rest = new Float32Array(this.hold.length - count);
+    rest.set(this.hold.subarray(count));
+    this.hold = rest;
+    return frame;
+  }
+  downsample(input) {
+    const rate = sampleRate;
+    if (rate === this.target) return input;
+    const ratio = rate / this.target;
+    const length = Math.floor(input.length / ratio);
+    const result = new Float32Array(length);
+    const last = input.length - 1;
+    for (let i = 0; i < length; i++) {
+      const position = i * ratio;
+      const index = Math.floor(position);
+      const fraction = position - index;
+      const left = input[index] || 0;
+      const right = input[Math.min(index + 1, last)] || left;
+      result[i] = left + (right - left) * fraction;
+    }
+    return result;
+  }
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0];
+    if (!channel || channel.length === 0) return true;
+    let sum = 0;
+    for (let i = 0; i < channel.length; i++) sum += channel[i] * channel[i];
+    this.peak = Math.max(this.peak, Math.min(1, Math.sqrt(sum / channel.length) * 4));
+    const samples = this.downsample(channel);
+    this.expand(samples);
+    if (this.hold.length < this.batch) return true;
+    const frame = this.take(this.batch);
+    const pcm = new Int16Array(frame.length);
+    for (let i = 0; i < frame.length; i++) {
+      const sample = Math.max(-1, Math.min(1, frame[i]));
+      pcm[i] = sample < 0 ? Math.round(sample * 32768) : Math.round(sample * 32767);
+    }
+    const level = this.peak;
+    this.peak = 0;
+    this.port.postMessage({ pcm, level }, [pcm.buffer]);
+    return true;
+  }
+}
+registerProcessor('agri-capture', AgriCapture);
+`;
+
+let workletUrl: string | null = null;
+
+function workletModuleUrl(): string {
+  if (!workletUrl) {
+    workletUrl = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: 'application/javascript' }));
+  }
+  return workletUrl;
+}
 
 export interface GeminiLiveOptions {
   language: () => Language;
@@ -31,7 +109,18 @@ export interface GeminiLiveOptions {
 interface Capture {
   context: AudioContext;
   stream: MediaStream;
-  processor: ScriptProcessorNode;
+  processor: ScriptProcessorNode | null;
+  worklet: AudioWorkletNode | null;
+}
+
+interface PendingMic {
+  stream: Promise<MediaStream>;
+  context: AudioContext;
+}
+
+interface CaptureFrame {
+  pcm?: Int16Array;
+  level: number;
 }
 
 export function createGeminiLiveProvider(options: GeminiLiveOptions): VoiceProvider {
@@ -39,21 +128,34 @@ export function createGeminiLiveProvider(options: GeminiLiveOptions): VoiceProvi
   let mode: VoiceMode = 'push-to-talk';
   let socket: Session | null = null;
   let opening: Promise<void> | null = null;
+  let socketGen = 0;
   let capture: Capture | null = null;
+  let pendingMic: PendingMic | null = null;
   let player: PcmPlayer | null = null;
   let quiet = false;
   let closing = false;
+  let recovering = false;
   let capturing = false;
   let inputText = '';
   let outputText = '';
   let finalSent = false;
   let turnDone = false;
   let playing = false;
+  let ignoreAudio = false;
+  let primed = false;
   let toolsInFlight = 0;
   let resumeHandle = '';
+  let lastLevelAt = 0;
 
   function emit(event: ProviderEvent): void {
     for (const listener of listeners) listener(event);
+  }
+
+  function emitLevel(level: number): void {
+    const at = typeof performance === 'undefined' ? Date.now() : performance.now();
+    if (at - lastLevelAt < 80) return;
+    lastLevelAt = at;
+    emit({ type: 'level', level });
   }
 
   function systemInstruction(): string {
@@ -86,39 +188,95 @@ Use tools for weather, prices, irrigation, soil, yield, disease, notes, and remi
     resetTurn();
   }
 
-  async function onMessage(message: LiveServerMessage): Promise<void> {
-    if (quiet) return;
+  function ensurePlayer(): PcmPlayer {
+    if (!player) {
+      player = new PcmPlayer({
+        onIdle: () => {
+          playing = false;
+          finishIfIdle();
+        },
+      });
+    }
+    return player;
+  }
+
+  function haltPlayback(): void {
+    ensurePlayer().stop();
+    playing = false;
+    ignoreAudio = true;
+    primed = false;
+  }
+
+  function allowPlayback(): void {
+    ignoreAudio = false;
+    primed = false;
+  }
+
+  function playAudio(audio: string): void {
+    if (ignoreAudio) return;
+    commitInput();
+    if (!playing) {
+      playing = true;
+      emit({ type: 'speech-start' });
+    }
+    ensurePlayer().enqueue(audio);
+  }
+
+  function onCaptureFrame(frame: CaptureFrame): void {
+    emitLevel(frame.level);
+    if (!capturing || !socket || quiet) return;
+    if (playing) {
+      if (frame.level < BARGE_LEVEL) return;
+      haltPlayback();
+    }
+    if (!frame.pcm || frame.pcm.length === 0) return;
+    try {
+      socket.sendRealtimeInput({
+        audio: { data: pcm16ToBase64(frame.pcm), mimeType: 'audio/pcm;rate=16000' },
+      });
+    } catch {
+      // socket closed between the check and the send
+    }
+  }
+
+  async function onMessage(message: LiveServerMessage, gen: number): Promise<void> {
+    if (quiet || gen !== socketGen) return;
     const content = message.serverContent;
+    let skipAudio = false;
     if (content?.interrupted) {
-      player?.stop();
+      ensurePlayer().stop();
       playing = false;
+      allowPlayback();
+      skipAudio = true;
     }
     if (content?.inputTranscription?.text) {
+      primed = true;
+      if (playing) {
+        ensurePlayer().stop();
+        playing = false;
+        ignoreAudio = true;
+      }
       inputText = mergeText(inputText, content.inputTranscription.text);
       if (!finalSent) emit({ type: 'partial', text: inputText });
     }
     if (content?.outputTranscription?.text) {
+      if (primed) allowPlayback();
       commitInput();
       outputText = mergeText(outputText, content.outputTranscription.text);
       emit({ type: 'assistant', text: outputText });
     }
     const audio = message.data;
-    if (audio) {
-      commitInput();
-      if (!playing) {
-        playing = true;
-        emit({ type: 'speech-start' });
-      }
-      player?.enqueue(audio);
-    }
+    if (audio && !skipAudio) playAudio(audio);
     if (message.toolCall?.functionCalls?.length) {
       toolsInFlight += 1;
       const calls = message.toolCall.functionCalls;
       try {
         const responses = [];
         for (const call of calls) {
+          if (gen !== socketGen || quiet) return;
           const name = call.name ?? 'unknown';
           const result = await runTool(name, call.args ?? {});
+          if (gen !== socketGen || quiet) return;
           emit({ type: 'tool', result });
           responses.push({
             id: call.id,
@@ -132,11 +290,13 @@ Use tools for weather, prices, irrigation, soil, yield, disease, notes, and remi
         finishIfIdle();
       }
     }
+    if (gen !== socketGen || quiet) return;
     if (message.sessionResumptionUpdate?.newHandle) {
       resumeHandle = message.sessionResumptionUpdate.newHandle;
     }
     if (content?.turnComplete) {
       turnDone = true;
+      if (ignoreAudio && !primed) allowPlayback();
       if (!finalSent) commitInput();
       finishIfIdle();
     }
@@ -144,24 +304,19 @@ Use tools for weather, prices, irrigation, soil, yield, disease, notes, and remi
 
   async function connect(): Promise<void> {
     if (socket) return;
+    const gen = ++socketGen;
     const response = await fetch('/api/live-token', { method: 'POST' });
     const body = await response.json().catch(() => ({})) as { token?: string };
-    if (!response.ok || !body.token) {
-      throw new VoiceFailure('network');
-    }
+    if (!response.ok || !body.token) throw new VoiceFailure('network');
+    if (gen !== socketGen || closing || quiet) return;
     const ai = new GoogleGenAI({
       apiKey: body.token,
       apiVersion: LIVE_API_VERSION,
       httpOptions: { apiVersion: LIVE_API_VERSION },
     });
     const language = options.language();
-    player = player ?? new PcmPlayer({
-      onIdle: () => {
-        playing = false;
-        finishIfIdle();
-      },
-    });
-    socket = await ai.live.connect({
+    ensurePlayer();
+    const session = await ai.live.connect({
       model: LIVE_MODEL,
       config: {
         responseModalities: [Modality.AUDIO],
@@ -179,56 +334,173 @@ Use tools for weather, prices, irrigation, soil, yield, disease, notes, and remi
       callbacks: {
         onopen: () => undefined,
         onmessage: (message: LiveServerMessage) => {
-          void onMessage(message);
+          if (gen !== socketGen) return;
+          void onMessage(message, gen);
         },
         onerror: () => {
-          if (!closing) emit({ type: 'error', code: 'network' });
+          if (gen !== socketGen || closing || quiet) return;
         },
         onclose: () => {
-          socket = null;
-          if (!closing) emit({ type: 'error', code: 'network' });
+          if (socket === session) socket = null;
+          if (gen !== socketGen) return;
+          if (socketClosePlan({ closing, quiet, recovering }) === 'reconnect') void recover();
         },
       },
     });
+    if (gen !== socketGen || closing || quiet) {
+      session.close();
+      return;
+    }
+    socket = session;
   }
 
-  async function openMic(): Promise<void> {
-    if (capture || !navigator.mediaDevices?.getUserMedia) {
-      if (!navigator.mediaDevices?.getUserMedia) throw new VoiceFailure('unsupported');
+  async function ensureSocket(): Promise<void> {
+    if (socket) return;
+    if (!opening) {
+      opening = connect().finally(() => {
+        opening = null;
+      });
+    }
+    await opening;
+  }
+
+  async function recover(): Promise<void> {
+    if (socketClosePlan({ closing, quiet, recovering }) === 'ignore') return;
+    recovering = true;
+    emit({ type: 'connection', status: 'reconnecting' });
+    try {
+      for (let attempt = 1; attempt <= MAX_RECONNECTS; attempt += 1) {
+        if (closing || quiet) return;
+        try {
+          socket = null;
+          await ensureSocket();
+          if (socket) {
+            emit({ type: 'connection', status: 'open' });
+            return;
+          }
+        } catch {
+          // try again until the attempts run out
+        }
+        if (attempt < MAX_RECONNECTS) {
+          await new Promise((resolve) => {
+            setTimeout(resolve, reconnectDelayMs(attempt));
+          });
+        }
+      }
+      emit({ type: 'connection', status: 'open' });
+      emit({ type: 'error', code: 'network' });
+    } finally {
+      recovering = false;
+    }
+  }
+
+  function createInputContext(): AudioContext {
+    const Ctx = window.AudioContext
+      ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    try {
+      return new Ctx({ sampleRate: INPUT_RATE, latencyHint: 'interactive' });
+    } catch {
+      return new Ctx();
+    }
+  }
+
+  function beginCapture(): PendingMic | null {
+    if (capture) {
+      capturing = true;
+      return null;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) throw new VoiceFailure('unsupported');
+    const context = createInputContext();
+    if (context.state === 'suspended') void context.resume();
+    const pending: PendingMic = {
+      context,
+      stream: navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      }),
+    };
+    pendingMic = pending;
+    return pending;
+  }
+
+  async function abandonPending(pending: PendingMic | null): Promise<void> {
+    if (!pending) return;
+    pending.context.close().catch(() => undefined);
+    try {
+      const stream = await pending.stream;
+      for (const track of stream.getTracks()) track.stop();
+    } catch {
+      // permission denied or the request was already aborted
+    }
+    if (pendingMic === pending) pendingMic = null;
+  }
+
+  async function finishCapture(pending: PendingMic | null): Promise<void> {
+    if (!pending) {
       capturing = true;
       return;
     }
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
-    });
-    const context = new AudioContext();
-    await context.resume();
-    const source = context.createMediaStreamSource(stream);
-    const processor = context.createScriptProcessor(4096, 1, 1);
-    const mute = context.createGain();
+    let stream: MediaStream;
+    try {
+      stream = await pending.stream;
+    } catch (error) {
+      pending.context.close().catch(() => undefined);
+      if (pendingMic === pending) pendingMic = null;
+      throw failureFromMic(error);
+    }
+    if (quiet || closing) {
+      for (const track of stream.getTracks()) track.stop();
+      pending.context.close().catch(() => undefined);
+      if (pendingMic === pending) pendingMic = null;
+      return;
+    }
+    await pending.context.resume();
+    const mute = pending.context.createGain();
     mute.gain.value = 0;
-    processor.onaudioprocess = (event) => {
-      if (!capturing || !socket || quiet) return;
-      const samples = event.inputBuffer.getChannelData(0);
-      emit({ type: 'level', level: rms(samples) });
-      const pcm = downsample(samples, context.sampleRate, INPUT_RATE);
-      if (pcm.length === 0) return;
-      socket.sendRealtimeInput({
-        audio: { data: pcm16Base64(pcm), mimeType: 'audio/pcm;rate=16000' },
-      });
-    };
-    source.connect(processor);
-    processor.connect(mute);
-    mute.connect(context.destination);
-    capture = { context, stream, processor };
+    const source = pending.context.createMediaStreamSource(stream);
+    let worklet: AudioWorkletNode | null = null;
+    let processor: ScriptProcessorNode | null = null;
+    try {
+      await pending.context.audioWorklet.addModule(workletModuleUrl());
+      worklet = new AudioWorkletNode(pending.context, 'agri-capture');
+      worklet.port.onmessage = (event: MessageEvent<CaptureFrame>) => onCaptureFrame(event.data);
+      source.connect(worklet);
+      worklet.connect(mute);
+    } catch {
+      worklet?.disconnect();
+      worklet = null;
+      processor = pending.context.createScriptProcessor(2048, 1, 1);
+      processor.onaudioprocess = (event) => {
+        const samples = event.inputBuffer.getChannelData(0);
+        onCaptureFrame({
+          level: rms(samples),
+          pcm: floatToPcm16(downsample(samples, pending.context.sampleRate, INPUT_RATE)),
+        });
+      };
+      source.connect(processor);
+      processor.connect(mute);
+    }
+    mute.connect(pending.context.destination);
+    capture = { context: pending.context, stream, processor, worklet };
+    pendingMic = null;
     capturing = true;
   }
 
   function releaseMic(): void {
     capturing = false;
+    lastLevelAt = 0;
     emit({ type: 'level', level: 0 });
+    const pending = pendingMic;
+    pendingMic = null;
+    if (pending) void abandonPending(pending);
     if (!capture) return;
-    capture.processor.onaudioprocess = null;
+    if (capture.processor) capture.processor.onaudioprocess = null;
+    capture.worklet?.port.close();
+    capture.worklet?.disconnect();
     capture.context.close().catch(() => undefined);
     for (const track of capture.stream.getTracks()) track.stop();
     capture = null;
@@ -242,47 +514,60 @@ Use tools for weather, prices, irrigation, soil, yield, disease, notes, and remi
       }
       quiet = false;
       closing = false;
-      if (!socket) {
-        if (!opening) {
-          opening = connect().finally(() => {
-            opening = null;
-          });
+      ensurePlayer().prepare();
+      let pending: PendingMic | null = null;
+      try {
+        pending = beginCapture();
+        await ensureSocket();
+        if (quiet || closing) {
+          await abandonPending(pending);
+          return;
         }
-        await opening;
+        await finishCapture(pending);
+      } catch (error) {
+        await abandonPending(pending);
+        releaseMic();
+        throw error instanceof VoiceFailure ? error : failureFromMic(error);
       }
-      resetTurn();
-      await openMic();
     },
     stop() {
       if (mode === 'hands-free') return;
       capturing = false;
-      socket?.sendRealtimeInput({ audioStreamEnd: true });
+      try {
+        socket?.sendRealtimeInput({ audioStreamEnd: true });
+      } catch {
+        // socket already closed
+      }
       releaseMic();
     },
     suspend() {
       quiet = true;
-      player?.stop();
-      playing = false;
+      haltPlayback();
       releaseMic();
+      player?.suspendOutput();
     },
     dispose() {
       closing = true;
       quiet = true;
-      player?.stop();
-      releaseMic();
-      socket?.close();
-      socket = null;
+      socketGen += 1;
+      const current = player;
       player = null;
+      void current?.close();
+      releaseMic();
+      try {
+        socket?.close();
+      } catch {
+        // already closed
+      }
+      socket = null;
     },
     sendText(text: string) {
       quiet = false;
+      allowPlayback();
       socket?.sendClientContent({ turns: text, turnComplete: true });
     },
     bargeIn() {
-      player?.stop();
-      playing = false;
-      if (quiet || !socket) return;
-      socket.sendClientContent({ turnComplete: true });
+      haltPlayback();
     },
     setMode(next: VoiceMode) {
       mode = next;
@@ -310,73 +595,4 @@ function rms(samples: Float32Array): number {
   let sum = 0;
   for (const sample of samples) sum += sample * sample;
   return Math.min(1, Math.sqrt(sum / samples.length) * 4);
-}
-
-function downsample(input: Float32Array, inputRate: number, outputRate: number): Float32Array {
-  if (inputRate === outputRate) return input;
-  const ratio = inputRate / outputRate;
-  const length = Math.floor(input.length / ratio);
-  const result = new Float32Array(length);
-  for (let i = 0; i < length; i += 1) result[i] = input[Math.floor(i * ratio)] ?? 0;
-  return result;
-}
-
-function pcm16Base64(samples: Float32Array): string {
-  const pcm = new Int16Array(samples.length);
-  for (let i = 0; i < samples.length; i += 1) {
-    const sample = Math.max(-1, Math.min(1, samples[i] ?? 0));
-    pcm[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
-  }
-  const bytes = new Uint8Array(pcm.buffer);
-  let binary = '';
-  const step = 0x8000;
-  for (let i = 0; i < bytes.length; i += step) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + step));
-  }
-  return btoa(binary);
-}
-
-class PcmPlayer {
-  private context: AudioContext | null = null;
-  private nextTime = 0;
-  private sources: AudioBufferSourceNode[] = [];
-  private readonly onIdle: () => void;
-
-  constructor(hooks: { onIdle: () => void }) {
-    this.onIdle = hooks.onIdle;
-  }
-
-  enqueue(base64: string): void {
-    const context = this.context ?? new AudioContext();
-    this.context = context;
-    void context.resume();
-    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
-    const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 2));
-    const buffer = context.createBuffer(1, pcm.length, OUTPUT_RATE);
-    const channel = buffer.getChannelData(0);
-    for (let i = 0; i < pcm.length; i += 1) channel[i] = (pcm[i] ?? 0) / 32768;
-    const source = context.createBufferSource();
-    source.buffer = buffer;
-    source.connect(context.destination);
-    const startAt = Math.max(context.currentTime, this.nextTime);
-    source.start(startAt);
-    this.nextTime = startAt + buffer.duration;
-    this.sources.push(source);
-    source.onended = () => {
-      this.sources = this.sources.filter((item) => item !== source);
-      if (this.sources.length === 0) this.onIdle();
-    };
-  }
-
-  stop(): void {
-    for (const source of this.sources) {
-      try {
-        source.stop();
-      } catch {
-        // already stopped
-      }
-    }
-    this.sources = [];
-    this.nextTime = 0;
-  }
 }

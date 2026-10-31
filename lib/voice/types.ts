@@ -3,6 +3,7 @@ import type { Language, Source } from '../../types';
 
 export type VoicePhase = 'idle' | 'listening' | 'thinking' | 'speaking';
 export type VoiceMode = 'push-to-talk' | 'hands-free';
+export type VoiceConnection = 'open' | 'connecting' | 'reconnecting';
 
 export type VoiceErrorCode =
   | 'unsupported'
@@ -27,6 +28,7 @@ export type ProviderEvent =
   | { type: 'speech-end' }
   | { type: 'assistant'; text: string }
   | { type: 'tool'; result: ToolResult }
+  | { type: 'connection'; status: VoiceConnection }
   | { type: 'error'; code: VoiceErrorCode };
 
 export interface VoiceProvider {
@@ -52,6 +54,7 @@ export interface VoiceProvider {
 export interface SessionState {
   phase: VoicePhase;
   mode: VoiceMode;
+  connection: VoiceConnection;
   partialTranscript: string;
   finalTranscript: string;
   assistantText: string;

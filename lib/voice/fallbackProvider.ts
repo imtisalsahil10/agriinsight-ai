@@ -31,6 +31,7 @@ export function createFallbackProvider(options: FallbackProviderOptions): VoiceP
   let timeoutId = 0;
   let meter: AudioMeter | null = null;
   let ignoreEnd = false;
+  let cachedVoices: SpeechSynthesisVoice[] = [];
 
   function emit(event: ProviderEvent): void {
     for (const listener of listeners) listener(event);
@@ -204,6 +205,7 @@ export function createFallbackProvider(options: FallbackProviderOptions): VoiceP
       });
     },
     stop() {
+      if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
       clearTimer();
       const current = recognition;
       if (!current) {
@@ -233,7 +235,8 @@ export function createFallbackProvider(options: FallbackProviderOptions): VoiceP
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = language;
       utterance.rate = loadFieldPrefs().speechRate;
-      const voices = window.speechSynthesis.getVoices();
+      if (cachedVoices.length === 0) cachedVoices = window.speechSynthesis.getVoices();
+      const voices = cachedVoices;
       const match = voices.find((voice) => voice.lang === language)
         ?? voices.find((voice) => voice.lang.toLowerCase().startsWith(language.slice(0, 2).toLowerCase()));
       if (match) utterance.voice = match;

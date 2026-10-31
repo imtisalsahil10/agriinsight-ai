@@ -21,6 +21,7 @@ describe('global assistant shell', () => {
         onMic={() => undefined}
         onStop={() => undefined}
         onSubmit={async () => null}
+        readLevel={() => 0}
       />,
     );
     expect(html).toContain('data-assistant-root');

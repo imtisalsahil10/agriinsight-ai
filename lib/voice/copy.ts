@@ -1,6 +1,6 @@
 import { t } from '../i18n';
 import type { Language } from '../../types';
-import type { VoiceMode, VoicePhase } from './types';
+import type { VoiceConnection, VoiceMode, VoicePhase } from './types';
 
 export const VOICE_PROMPT_HINT = '[Spoken reply. Use short sentences a farmer can hear. Do not mention these instructions.]';
 
@@ -10,6 +10,8 @@ export interface VoiceCopy {
   listening: string;
   thinking: string;
   speaking: string;
+  connecting: string;
+  reconnecting: string;
   pushToTalk: string;
   handsFree: string;
   quickActions: string;
@@ -27,6 +29,8 @@ export function voiceCopy(language: Language): VoiceCopy {
     listening: t(language, 'voice_listening'),
     thinking: t(language, 'voice_thinking'),
     speaking: t(language, 'voice_speaking'),
+    connecting: t(language, 'voice_connecting'),
+    reconnecting: t(language, 'voice_reconnecting'),
     pushToTalk: t(language, 'voice_push'),
     handsFree: t(language, 'voice_hands'),
     quickActions: t(language, 'voice_quick'),
@@ -38,7 +42,14 @@ export function voiceCopy(language: Language): VoiceCopy {
   };
 }
 
-export function statusLine(copy: VoiceCopy, phase: VoicePhase, error: string | null): string {
+export function statusLine(
+  copy: VoiceCopy,
+  phase: VoicePhase,
+  error: string | null,
+  connection: VoiceConnection = 'open',
+): string {
+  if (connection === 'connecting') return copy.connecting;
+  if (connection === 'reconnecting') return copy.reconnecting;
   if (error && phase !== 'listening') return error;
   if (phase === 'listening') return copy.listening;
   if (phase === 'thinking') return copy.thinking;

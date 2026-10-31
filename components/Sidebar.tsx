@@ -34,7 +34,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, language, onViewChange, 
         <div className="fixed inset-0 bg-black/50 z-20 md:hidden" onClick={onClose} />
       )}
 
-      <div className={`fixed inset-y-0 left-0 z-30 w-64 transform overflow-y-auto border-r border-slate-200 bg-white transition-transform duration-200 ease-in-out dark:border-slate-700 dark:bg-slate-900 md:static md:h-screen md:translate-x-0 ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <div className={`fixed inset-y-0 left-0 z-30 w-64 transform overflow-y-auto border-r border-slate-200 bg-white transition-transform duration-200 ease-in-out dark:border-slate-700 dark:bg-slate-900 md:static md:h-screen md:translate-x-0 ${isOpen ? 'translate-x-0' : 'max-md:-translate-x-full'}`}>
         <div className="flex h-full flex-col">
           <div className="sticky top-0 flex items-center gap-2 border-b border-slate-100 bg-white px-4 py-4 dark:border-slate-800 dark:bg-slate-900">
             <div className="rounded-lg bg-agri-700 p-2">
@@ -55,7 +55,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, language, onViewChange, 
                   key={item.view}
                   type="button"
                   onClick={() => { onViewChange(item.view); onClose(); }}
-                  className={`flex min-h-11 w-full items-center rounded-lg px-3 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-agri-700 ${
+                  className={`flex min-h-11 w-full touch-manipulation items-center rounded-lg px-3 text-sm transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-agri-700 active:bg-slate-100 dark:active:bg-slate-800 ${
                     isActive
                       ? 'bg-agri-50 font-semibold text-agri-900 dark:bg-agri-900/40 dark:text-agri-100'
                       : 'text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800'
@@ -89,4 +89,4 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, language, onViewChange, 
   );
 };
 
-export default Sidebar;
+export default React.memo(Sidebar);

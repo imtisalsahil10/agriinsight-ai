@@ -3,7 +3,7 @@ import { Loader2, Mic, Send, Square, X } from 'lucide-react';
 import { t } from '../../lib/i18n';
 import type { Language } from '../../types';
 import type { SessionState } from '../../lib/voice/types';
-import Waveform from '../voice/Waveform';
+import { VoiceMeter } from '../voice/Waveform';
 
 interface GlobalAssistantProps {
   language: Language;
@@ -12,11 +12,13 @@ interface GlobalAssistantProps {
   onMic: () => void;
   onStop: () => void;
   onSubmit: (text: string) => Promise<string | null>;
+  readLevel: () => number;
 }
 
-const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ language, state, dock, onMic, onStop, onSubmit }) => {
+const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ language, state, dock, onMic, onStop, onSubmit, readLevel }) => {
   const [open, setOpen] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
+  const sendingRef = useRef(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [turns, setTurns] = useState<Array<{ role: 'user' | 'assistant'; text: string }>>([]);
@@ -37,17 +39,22 @@ const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ language, state, dock
     return () => window.removeEventListener('keydown', onKey);
   }, [open]);
 
-  const status = listening
-    ? t(language, 'assistant_listening')
-    : thinking
-      ? t(language, 'assistant_thinking')
-      : speaking
-        ? t(language, 'assistant_speaking')
-        : t(language, 'assistant_idle');
+  const status = state.connection === 'connecting'
+    ? t(language, 'assistant_connecting')
+    : state.connection === 'reconnecting'
+      ? t(language, 'assistant_reconnecting')
+      : listening
+        ? t(language, 'assistant_listening')
+        : thinking
+          ? t(language, 'assistant_thinking')
+          : speaking
+            ? t(language, 'assistant_speaking')
+            : t(language, 'assistant_idle');
 
   const submit = async () => {
     const text = draft.trim();
-    if (!text || sending) return;
+    if (!text || sendingRef.current) return;
+    sendingRef.current = true;
     setSending(true);
     setDraft('');
     const userTurn: { role: 'user' | 'assistant'; text: string } = { role: 'user', text };
@@ -59,6 +66,7 @@ const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ language, state, dock
         setTurns((current) => [...current, reply].slice(-8));
       }
     } finally {
+      sendingRef.current = false;
       setSending(false);
     }
   };
@@ -82,7 +90,7 @@ const GlobalAssistant: React.FC<GlobalAssistantProps> = ({ language, state, dock
           </header>
 
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
-            <Waveform level={state.audioLevel} active={listening || speaking} />
+            <VoiceMeter readLevel={readLevel} active={listening || speaking} />
             <p className="sr-only" aria-live="polite">{status}</p>
             {(listening || state.partialTranscript || state.finalTranscript) && (
               <p className="rounded-xl bg-slate-50 px-3 py-2 text-sm text-slate-800 dark:bg-slate-900 dark:text-slate-100">

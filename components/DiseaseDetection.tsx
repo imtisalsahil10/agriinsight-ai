@@ -3,7 +3,9 @@ import { AlertCircle, Camera, CheckCircle2, ImagePlus, Leaf, Loader2, Trash2 } f
 import { usePageAssistant } from './assistant/context';
 import { Callout, EmptyState, PageFrame, Panel, PrimaryButton, SecondaryButton } from './ui/ui';
 import { explainView } from '../lib/assistant/copy';
+import { loadFieldPrefs } from '../lib/field/prefs';
 import { rememberSummary } from '../lib/farm/store';
+import { downscaleImage } from '../lib/image/downscale';
 import { presentDisease } from '../lib/tools/disease';
 import type { DiseaseAnalysis, Language } from '../types';
 
@@ -97,8 +99,18 @@ const DiseaseDetection: React.FC<DiseaseDetectionProps> = ({ language, onAnalyze
     running.current = true;
     setLoading(true);
     setError(null);
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => resolve());
+    });
+    let prepared = image;
     try {
-      const raw = await onAnalyze(image);
+      const prefs = loadFieldPrefs();
+      prepared = await downscaleImage(image, prefs.lowBandwidth ? 512 : 768, prefs.lowBandwidth ? 0.5 : 0.7);
+    } catch {
+      prepared = image;
+    }
+    try {
+      const raw = await onAnalyze(prepared);
       if (!raw) {
         const summary = hi
           ? 'विश्लेषण ने कोई निदान नहीं दिया। मैंने कोई रोग नहीं गढ़ा।'

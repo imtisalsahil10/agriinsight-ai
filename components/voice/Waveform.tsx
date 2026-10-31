@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 interface WaveformProps {
   level: number;
@@ -21,5 +21,27 @@ const Waveform: React.FC<WaveformProps> = ({ level, active }) => {
     </div>
   );
 };
+
+export function VoiceMeter({ active, readLevel }: { active: boolean; readLevel: () => number }) {
+  const [level, setLevel] = useState(0);
+
+  useEffect(() => {
+    if (!active) return undefined;
+    let frame = 0;
+    let last = -1;
+    const tick = () => {
+      const next = readLevel();
+      if (Math.abs(next - last) >= 0.04 || (next === 0 && last !== 0)) {
+        last = next;
+        setLevel(next);
+      }
+      frame = window.requestAnimationFrame(tick);
+    };
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, [active, readLevel]);
+
+  return <Waveform level={active ? level : 0} active={active} />;
+}
 
 export default Waveform;
