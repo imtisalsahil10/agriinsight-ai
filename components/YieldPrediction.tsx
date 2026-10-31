@@ -1,144 +1,117 @@
-import React, { useState } from 'react';
-import { Zap, Loader2 } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { Loader2, Zap } from 'lucide-react';
+import { usePageAssistant } from './assistant/context';
 import DemoBadge from './voice/DemoBadge';
+import { Callout, Field, PageFrame, Panel, PrimaryButton, Stat, TextInput } from './ui/ui';
+import { explainView } from '../lib/assistant/copy';
+import { applyYield, yieldMissing, type YieldFields } from '../lib/assistant/validate';
+import { rememberSummary } from '../lib/farm/store';
 import { predictYield } from '../lib/tools/yield';
-import { YieldPrediction } from '../types';
+import type { Language, YieldPrediction } from '../types';
 
-interface YieldPredictionProps {
-  language: 'en-US' | 'hi-IN';
-}
+const INITIAL: YieldFields = { cropType: 'wheat', area: 5, rainfallDays: 25, temperature: 22 };
 
-const YieldPredictionComp: React.FC<YieldPredictionProps> = ({ language }) => {
-  const isHindi = language === 'hi-IN';
+const YieldPredictionComp: React.FC<{ language: Language }> = ({ language }) => {
+  const hi = language === 'hi-IN';
+  const [inputs, setInputs] = useState<YieldFields>(INITIAL);
+  const [errors, setErrors] = useState<string[]>([]);
   const [prediction, setPrediction] = useState<YieldPrediction | null>(null);
   const [loading, setLoading] = useState(false);
-  const [inputs, setInputs] = useState({ cropType: 'wheat', area: 5, rainfallDays: 25, temperature: 22 });
+  const inputsRef = useRef(inputs);
+  const summaryRef = useRef<string | null>(null);
+  const running = useRef(false);
+  inputsRef.current = inputs;
 
-  const handlePredict = () => {
+  const show = (value: number) => (Number.isFinite(value) ? value : '');
+
+  const execute = async () => {
+    const missing = yieldMissing(inputsRef.current);
+    setErrors(missing);
+    if (missing.length) return { ok: false, summary: hi ? `पहले ${missing.join(', ')} चाहिए।` : `I still need ${missing.join(', ')}.` };
+    if (running.current) return { ok: false, summary: hi ? 'अनुमान पहले से चल रहा है।' : 'Prediction is already running.' };
+    running.current = true;
     setLoading(true);
-    setPrediction(predictYield(inputs).data);
-    setLoading(false);
+    try {
+      const result = predictYield(inputsRef.current);
+      if (!result.ok || !result.data) return { ok: false, summary: result.summary };
+      setPrediction(result.data);
+      summaryRef.current = result.summary;
+      rememberSummary(result.summary);
+      return { ok: true, summary: result.summary };
+    } finally {
+      running.current = false;
+      setLoading(false);
+    }
   };
 
+  usePageAssistant({
+    view: 'yield',
+    language,
+    explain: () => explainView('yield', language),
+    read: () => summaryRef.current,
+    apply: (patch) => {
+      const next = applyYield(inputsRef.current, patch);
+      inputsRef.current = next;
+      setInputs(next);
+      setErrors([]);
+    },
+    missing: () => yieldMissing(inputsRef.current),
+    run: execute,
+  });
+
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in">
-      <div className="bg-gradient-to-r from-yellow-600 to-yellow-800 rounded-3xl p-8 text-white">
-        <div className="flex items-center mb-3">
-          <Zap className="w-8 h-8 mr-3" />
-          <h1 className="text-3xl font-bold">{isHindi ? "पैदावार भविष्यवाणी" : "Yield Prediction"}</h1>
+    <PageFrame
+      icon={<Zap className="h-5 w-5" />}
+      title={hi ? 'पैदावार अनुमान' : 'Yield Prediction'}
+      description={hi
+        ? 'फसल, क्षेत्रफल, वर्षा के दिन और तापमान से डेमो अनुमान। यह मापी हुई कटाई नहीं है।'
+        : 'A demo estimate from crop, area, rainfall days, and temperature. It is not a measured harvest.'}
+    >
+      <Panel>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field id="yield-crop" label={hi ? 'फसल' : 'Crop'} error={errors.includes('a crop') ? errors[0] : undefined}>
+            <TextInput id="yield-crop" value={inputs.cropType} invalid={errors.includes('a crop')} onChange={(event) => { const next = { ...inputsRef.current, cropType: event.target.value }; inputsRef.current = next; setInputs(next); }} />
+          </Field>
+          <Field id="yield-area" label={hi ? 'क्षेत्रफल (हेक्टेयर)' : 'Area (hectares)'}>
+            <TextInput id="yield-area" type="number" min="0" step="0.1" inputMode="decimal" value={show(inputs.area)} invalid={errors.some((item) => item.startsWith('area'))} onChange={(event) => { const next = { ...inputsRef.current, area: event.target.value === '' ? Number.NaN : Number(event.target.value) }; inputsRef.current = next; setInputs(next); }} />
+          </Field>
+          <Field id="yield-rain" label={hi ? 'वर्षा के दिन (0–30)' : 'Rainfall days (0–30)'}>
+            <TextInput id="yield-rain" type="number" min="0" max="30" inputMode="numeric" value={show(inputs.rainfallDays)} invalid={errors.some((item) => item.startsWith('rainfall'))} onChange={(event) => { const next = { ...inputsRef.current, rainfallDays: event.target.value === '' ? Number.NaN : Number(event.target.value) }; inputsRef.current = next; setInputs(next); }} />
+          </Field>
+          <Field id="yield-temp" label={hi ? 'औसत तापमान (°C)' : 'Average temperature (°C)'}>
+            <TextInput id="yield-temp" type="number" inputMode="decimal" value={show(inputs.temperature)} invalid={errors.includes('temperature')} onChange={(event) => { const next = { ...inputsRef.current, temperature: event.target.value === '' ? Number.NaN : Number(event.target.value) }; inputsRef.current = next; setInputs(next); }} />
+          </Field>
         </div>
-        <p className="text-yellow-100">{isHindi ? "मौजूदा परिस्थितियों के आधार पर अपनी पैदावार का अनुमान लगाएं" : "Predict your crop yield based on current conditions"}</p>
-      </div>
-
-      <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 space-y-4 transition-colors">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-2">{isHindi ? "फसल (कॉमा से अलग करें)" : "Crop (comma-separated)"}</label>
-            <input
-              value={inputs.cropType}
-              onChange={(e) => setInputs({ ...inputs, cropType: e.target.value })}
-              placeholder={isHindi ? "उदाहरण: गेहूँ, चावल" : "e.g., wheat, rice"}
-              className="w-full px-4 py-2 border rounded-lg dark:bg-slate-700 dark:border-slate-600"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2">{isHindi ? "क्षेत्रफल (हेक्टेयर)" : "Area (hectares)"}</label>
-            <input
-              type="number"
-              value={inputs.area}
-              onChange={(e) => setInputs({ ...inputs, area: parseFloat(e.target.value) })}
-              className="w-full px-4 py-2 border rounded-lg dark:bg-slate-700 dark:border-slate-600"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2">{isHindi ? "वर्षा के दिन" : "Rainfall Days"}</label>
-            <input
-              type="number"
-              min="0"
-              max="30"
-              value={inputs.rainfallDays}
-              onChange={(e) => setInputs({ ...inputs, rainfallDays: parseInt(e.target.value) })}
-              className="w-full px-4 py-2 border rounded-lg dark:bg-slate-700 dark:border-slate-600"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2">{isHindi ? "औसत तापमान (°C)" : "Avg Temperature (°C)"}</label>
-            <input
-              type="number"
-              value={inputs.temperature}
-              onChange={(e) => setInputs({ ...inputs, temperature: parseInt(e.target.value) })}
-              className="w-full px-4 py-2 border rounded-lg dark:bg-slate-700 dark:border-slate-600"
-            />
-          </div>
+        {errors.length > 0 && <div className="mt-3"><Callout tone="danger">{errors.join(', ')}</Callout></div>}
+        <div className="mt-4">
+          <PrimaryButton onClick={() => { void execute(); }} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {hi ? 'पैदावार का अनुमान' : 'Predict yield'}
+          </PrimaryButton>
         </div>
-
-        <button
-          onClick={handlePredict}
-          disabled={loading}
-          className="w-full px-6 py-3 bg-yellow-600 text-white rounded-xl hover:bg-yellow-700 disabled:bg-gray-400 font-medium"
-        >
-          {loading ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
-              {isHindi ? "भविष्यवाणी..." : "Predicting..."}
-            </>
-          ) : (
-            isHindi ? "भविष्यवाणी करें" : "Predict Yield"
-          )}
-        </button>
-      </div>
-
+      </Panel>
       {prediction && (
         <div className="space-y-4">
           <DemoBadge language={language} />
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-yellow-50 dark:bg-yellow-900/30 p-6 rounded-xl text-center">
-              <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">{isHindi ? "अपेक्षित पैदावार" : "Expected Yield"}</p>
-              <p className="text-3xl font-bold text-yellow-600">{prediction.expectedYield}</p>
-              <p className="text-xs text-gray-600">{prediction.unit}</p>
-            </div>
-
-            <div className="bg-orange-50 dark:bg-orange-900/30 p-6 rounded-xl text-center">
-              <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">{isHindi ? "गुणवत्ता श्रेणी" : "Quality Grade"}</p>
-              <p className="text-3xl font-bold text-orange-600">{prediction.qualityGrade}</p>
-              <p className="text-xs text-gray-600">{isHindi ? "उत्कृष्ट" : "Excellent"}</p>
-            </div>
-
-            <div className="bg-amber-50 dark:bg-amber-900/30 p-6 rounded-xl text-center">
-              <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">{isHindi ? "विश्वास" : "Confidence"}</p>
-              <p className="text-3xl font-bold text-amber-600">{prediction.confidence.toFixed(0)}%</p>
-              <p className="text-xs text-gray-600">{isHindi ? "उच्च" : "High"}</p>
-            </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <Stat label={hi ? 'अपेक्षित पैदावार' : 'Expected yield'} value={prediction.expectedYield} detail={prediction.unit} />
+            <Stat label={hi ? 'श्रेणी' : 'Grade'} value={prediction.qualityGrade} />
+            <Stat label={hi ? 'फॉर्मूला विश्वास' : 'Formula confidence'} value={`${prediction.confidence}%`} detail={hi ? 'डेमो फॉर्मूला' : 'Demo formula'} />
           </div>
-
-          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl transition-colors">
-            <h3 className="font-bold mb-4">{isHindi ? "प्रभावशाली कारक" : "Influencing Factors"}</h3>
-            <div className="space-y-3">
-              {prediction.factors.map((factor, i) => (
-                <div key={i} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-700 rounded-lg">
-                  <div>
-                    <p className="font-medium text-sm">{factor.name}</p>
-                    <p className="text-xs text-gray-500">{factor.value}</p>
-                  </div>
-                  <span className={`text-xs font-bold px-2 py-1 rounded ${
-                    factor.impact === 'positive' ? 'bg-green-100 text-green-800' :
-                    factor.impact === 'negative' ? 'bg-red-100 text-red-800' :
-                    'bg-gray-100 text-gray-800'
-                  }`}>
-                    {factor.impact === 'positive' ? '↑' : factor.impact === 'negative' ? '↓' : '→'} {factor.impact}
-                  </span>
-                </div>
+          <Panel>
+            <h2 className="text-sm font-semibold">{hi ? 'कारक' : 'Factors'}</h2>
+            <ul className="mt-2 divide-y divide-slate-100 dark:divide-slate-700">
+              {prediction.factors.map((factor) => (
+                <li key={factor.name} className="flex items-center justify-between py-2 text-sm">
+                  <span>{factor.name}<span className="ml-2 text-slate-500">{factor.value}</span></span>
+                  <span className="text-xs font-medium uppercase text-slate-500">{factor.impact}</span>
+                </li>
               ))}
-            </div>
-          </div>
-        </div>
+            </ul>
+          </Panel>
         </div>
       )}
-    </div>
+    </PageFrame>
   );
 };
 

@@ -2,11 +2,16 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Image as ImageIcon, X, Loader2, Menu, Languages } from 'lucide-react';
 import { generateResponse, streamResponse, analyzeDiseaseFromImage } from './services/geminiService';
 import { Message, LoadingState, Language, ViewState } from './types';
-import { WELCOME_MESSAGE, APP_NAME } from './constants';
+import { WELCOME_MESSAGE } from './constants';
 import { buildMorningBriefing } from './lib/briefing';
 import { dueReminders, loadFarm, markReminderNotified, rememberSummary, syncFarm, updateFarm } from './lib/farm/store';
 import { loadFieldPrefs, saveFieldPrefs, type FieldPrefs } from './lib/field/prefs';
-import { t } from './lib/i18n';
+import { t, type MessageKey } from './lib/i18n';
+import { isAssistantCommand } from './lib/assistant/intent';
+import { runUtterance, type AssistantHost } from './lib/assistant/run';
+import { AssistantProvider, useAssistantRegistry } from './components/assistant/context';
+import ChatBridge from './components/assistant/ChatBridge';
+import GlobalAssistant from './components/assistant/GlobalAssistant';
 import { detectLanguageSwitch } from './lib/i18n/detect';
 import { downscaleImage } from './lib/image/downscale';
 import { diagnoseCropDisease } from './lib/tools/disease';
@@ -58,7 +63,25 @@ function cacheAdvice(text: string): void {
   ));
 }
 
-const App: React.FC = () => {
+const HEADER_KEY: Record<ViewState, MessageKey> = {
+  voice: 'header_talk',
+  dashboard: 'header_dashboard',
+  video: 'header_video',
+  settings: 'header_settings',
+  chat: 'header_chat',
+  disease: 'nav_disease',
+  soil: 'nav_soil',
+  irrigation: 'nav_irrigation',
+  market: 'nav_market',
+  alerts: 'nav_alerts',
+  calendar: 'nav_calendar',
+  fertilizer: 'nav_fertilizer',
+  locations: 'nav_locations',
+  yield: 'nav_yield',
+};
+
+const AppShell: React.FC = () => {
+  const assistantRegistry = useAssistantRegistry();
   // App State
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -94,8 +117,21 @@ const App: React.FC = () => {
   const languageRef = useRef(language);
   const messagesRef = useRef(messages);
   const viewRef = useRef(view);
+  const hostRef = useRef<AssistantHost | null>(null);
   languageRef.current = language;
   viewRef.current = view;
+  hostRef.current = {
+    view,
+    language,
+    getPage: (next) => assistantRegistry.getPage(next),
+    navigate: (next) => setView(next),
+    setLanguage,
+    waitForPage: (next, patch, execute) => {
+      const pending = assistantRegistry.waitForPage(next, patch, execute);
+      setView(next);
+      return pending;
+    },
+  };
 
   const remember = useCallback((message: Message) => {
     const next = [...messagesRef.current, message];
@@ -148,6 +184,15 @@ const App: React.FC = () => {
         setToolCards((cards) => [result, ...cards].slice(0, 4));
         cacheAdvice(result.summary);
         setLastAdvice(result.summary);
+      },
+      classify: (text) => isAssistantCommand(text),
+      intercept: async (text) => {
+        const host = hostRef.current;
+        if (!host) return null;
+        const outcome = await runUtterance(text, host);
+        if (!outcome) return null;
+        if (outcome.action === 'stop') return { action: 'stop' };
+        return { action: 'reply', text: outcome.text };
       },
     });
     sessionRef.current = session;
@@ -226,11 +271,45 @@ const App: React.FC = () => {
     }
   };
 
-  useEffect(() => {
-    if (viewRef.current !== 'voice') {
+  const submitAssistant = useCallback(async (text: string): Promise<string | null> => {
+    const host = hostRef.current;
+    const trimmed = text.trim();
+    if (!host || !trimmed) return null;
+    const outcome = await runUtterance(trimmed, host);
+    if (outcome?.action === 'stop') {
       sessionRef.current?.stop();
+      return t(languageRef.current, 'assistant_stop');
     }
-  }, [view]);
+    if (outcome?.action === 'reply') {
+      remember({ id: crypto.randomUUID(), role: 'user', content: trimmed, timestamp: Date.now() });
+      rememberSummary(outcome.text);
+      cacheAdvice(outcome.text);
+      setLastAdvice(outcome.text);
+      remember({ id: crypto.randomUUID(), role: 'model', content: outcome.text, timestamp: Date.now() });
+      sessionRef.current?.say(outcome.text);
+      return outcome.text;
+    }
+    remember({ id: crypto.randomUUID(), role: 'user', content: trimmed, timestamp: Date.now() });
+    setLoadingState('loading');
+    try {
+      const prior = messagesRef.current;
+      const { text: aiText, sources } = await generateResponse(trimmed, prior, undefined, languageRef.current);
+      rememberSummary(aiText);
+      cacheAdvice(aiText);
+      setLastAdvice(aiText);
+      remember({ id: crypto.randomUUID(), role: 'model', content: aiText, sources, timestamp: Date.now() });
+      sessionRef.current?.say(aiText);
+      setLoadingState('idle');
+      return aiText;
+    } catch (error) {
+      console.error(error);
+      const message = t(languageRef.current, 'chat_error');
+      remember({ id: crypto.randomUUID(), role: 'model', content: message, timestamp: Date.now() });
+      setLoadingState('error');
+      window.setTimeout(() => setLoadingState('idle'), 2000);
+      return message;
+    }
+  }, [remember]);
 
   const playBriefing = async () => {
     const farm = loadFarm();
@@ -431,6 +510,7 @@ const App: React.FC = () => {
           <Dashboard 
             onQuickAction={(prompt) => sendMessage(prompt)}
             onNavigate={(viewId) => setView(viewId as ViewState)}
+            onAsk={(prompt) => { void submitAssistant(prompt); }}
             language={language}
           />
         );
@@ -474,7 +554,8 @@ const App: React.FC = () => {
       case 'chat':
       default:
         return (
-          <div className="max-w-3xl mx-auto p-4 md:p-6 pb-24">
+          <div className="page-shell max-w-3xl">
+            <ChatBridge language={language} latest={[...messages].reverse().find((message) => message.role === 'model')?.content ?? ''} />
             {messages.map((msg) => (
               <ChatBubble key={msg.id} message={msg} />
             ))}
@@ -496,7 +577,7 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen bg-slate-50 dark:bg-slate-900 font-sans overflow-hidden transition-colors duration-200">
+    <div className="flex h-screen overflow-hidden overflow-x-hidden bg-slate-50 font-sans text-slate-900 transition-colors duration-200 dark:bg-slate-950 dark:text-slate-100">
       
       {/* Sidebar */}
       <Sidebar 
@@ -512,36 +593,31 @@ const App: React.FC = () => {
         
         {/* Header */}
         <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 px-4 py-3 flex items-center justify-between shadow-sm z-10 shrink-0 transition-colors">
-          <div className="flex items-center">
+          <div className="flex min-w-0 flex-1 items-center">
             <button 
               onClick={() => setIsSidebarOpen(true)}
               aria-label={t(language, 'menu_open')}
-              className="md:hidden mr-3 min-h-14 min-w-14 inline-flex items-center justify-center text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg"
+              className="mr-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700 md:hidden"
             >
-              <Menu className="w-6 h-6" />
+              <Menu className="h-5 w-5" />
             </button>
-            <h1 className="text-lg font-bold text-slate-800 dark:text-white hidden md:block">
-              {view === 'voice' ? t(language, 'header_talk') :
-               view === 'dashboard' ? t(language, 'header_dashboard') :
-               view === 'video' ? t(language, 'header_video') :
-               view === 'settings' ? t(language, 'header_settings') :
-               view === 'chat' ? t(language, 'header_chat') :
-               t(language, 'header_app')}
+            <h1 className="truncate text-base font-semibold text-slate-900 dark:text-white md:text-lg">
+              {t(language, HEADER_KEY[view])}
             </h1>
-            <h1 className="text-lg font-bold text-slate-800 dark:text-white md:hidden">{APP_NAME}</h1>
           </div>
 
-          <div className="flex items-center space-x-3">
+          <div className="flex shrink-0 items-center">
             <button 
               onClick={toggleLanguage}
-              className={`flex items-center min-h-14 px-4 rounded-full text-xs font-bold transition-all border ${
+              className={`inline-flex min-h-11 items-center rounded-full border px-3 text-xs font-semibold transition-colors ${
                 language === 'hi-IN' 
-                  ? 'bg-orange-50 border-orange-200 text-orange-700 dark:bg-orange-900/30 dark:border-orange-800 dark:text-orange-400' 
-                  : 'bg-slate-50 border-slate-200 text-slate-600 dark:bg-slate-700 dark:border-slate-600 dark:text-slate-300'
+                  ? 'border-orange-200 bg-orange-50 text-orange-800 dark:border-orange-800 dark:bg-orange-950/40 dark:text-orange-200' 
+                  : 'border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200'
               }`}
             >
-              <Languages className="w-3.5 h-3.5 mr-1.5" />
-              {language === 'hi-IN' ? 'हिन्दी' : 'English'}
+              <Languages className="mr-1.5 h-3.5 w-3.5" />
+              <span className="sm:hidden">{language === 'hi-IN' ? 'हि' : 'EN'}</span>
+              <span className="hidden sm:inline">{language === 'hi-IN' ? 'हिन्दी' : 'English'}</span>
             </button>
           </div>
         </header>
@@ -563,6 +639,14 @@ const App: React.FC = () => {
           {renderContent()}
         </main>
         {leafOpen && <LeafCapture language={language} onClose={() => setLeafOpen(false)} onCapture={(dataUrl) => { void onLeaf(dataUrl); }} />}
+        <GlobalAssistant
+          language={language}
+          state={voiceState}
+          dock={view === 'chat' ? 'chat' : view === 'voice' ? 'voice' : 'page'}
+          onMic={onMic}
+          onStop={() => sessionRef.current?.stop()}
+          onSubmit={submitAssistant}
+        />
 
         {/* Input Area - Only show in Chat view */}
         <div className={`bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 p-4 z-20 transition-all ${view !== 'chat' ? 'hidden' : 'block'}`}>
@@ -633,5 +717,11 @@ const App: React.FC = () => {
     </div>
   );
 };
+
+const App: React.FC = () => (
+  <AssistantProvider>
+    <AppShell />
+  </AssistantProvider>
+);
 
 export default App;

@@ -1,149 +1,133 @@
-import React, { useState } from 'react';
-import { Sprout, Loader2 } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { Loader2, Sprout } from 'lucide-react';
+import { usePageAssistant } from './assistant/context';
 import DemoBadge from './voice/DemoBadge';
+import { Callout, Field, PageFrame, Panel, PrimaryButton, Stat, TextInput } from './ui/ui';
+import { explainView } from '../lib/assistant/copy';
+import type { FieldPatch } from '../lib/assistant/types';
+import { applySoil, soilMissing, type SoilFields } from '../lib/assistant/validate';
+import { rememberSummary } from '../lib/farm/store';
 import { analyzeSoil } from '../lib/tools/soil';
-import { SoilData } from '../types';
+import type { Language, SoilData } from '../types';
 
-interface SoilAnalysisProps {
-  language: 'en-US' | 'hi-IN';
-}
+const INITIAL: SoilFields = { pH: 7, nitrogen: 50, phosphorus: 40, potassium: 300, organicMatter: 2 };
 
-const SoilAnalysis: React.FC<SoilAnalysisProps> = ({ language }) => {
-  const isHindi = language === 'hi-IN';
+const SoilAnalysis: React.FC<{ language: Language }> = ({ language }) => {
+  const hi = language === 'hi-IN';
+  const [inputs, setInputs] = useState<SoilFields>(INITIAL);
+  const [errors, setErrors] = useState<string[]>([]);
   const [soilData, setSoilData] = useState<SoilData | null>(null);
+  const [summary, setSummary] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [inputs, setInputs] = useState({ pH: 7, nitrogen: 50, phosphorus: 40, potassium: 300, organicMatter: 2 });
+  const inputsRef = useRef(inputs);
+  const summaryRef = useRef<string | null>(null);
+  const running = useRef(false);
+  inputsRef.current = inputs;
 
-  const handleAnalyze = () => {
+  const show = (value: number) => (Number.isFinite(value) ? value : '');
+
+  const execute = async (): Promise<{ ok: boolean; summary: string }> => {
+    const missing = soilMissing(inputsRef.current);
+    setErrors(missing);
+    if (missing.length) {
+      return { ok: false, summary: hi ? `पहले ${missing.join(', ')} चाहिए।` : `I still need ${missing.join(', ')}.` };
+    }
+    if (running.current) return { ok: false, summary: hi ? 'विश्लेषण पहले से चल रहा है।' : 'Analysis is already running.' };
+    running.current = true;
     setLoading(true);
-    setSoilData(analyzeSoil(inputs).data);
-    setLoading(false);
+    try {
+      const result = analyzeSoil(inputsRef.current);
+      if (!result.ok || !result.data) return { ok: false, summary: result.summary };
+      setSoilData(result.data);
+      setSummary(result.summary);
+      summaryRef.current = result.summary;
+      rememberSummary(result.summary);
+      return { ok: true, summary: result.summary };
+    } finally {
+      running.current = false;
+      setLoading(false);
+    }
+  };
+
+  usePageAssistant({
+    view: 'soil',
+    language,
+    explain: () => explainView('soil', language),
+    read: () => summaryRef.current,
+    apply: (patch: FieldPatch) => {
+      const next = applySoil(inputsRef.current, patch);
+      inputsRef.current = next;
+      setInputs(next);
+      setErrors([]);
+    },
+    missing: () => soilMissing(inputsRef.current),
+    run: execute,
+  });
+
+  const setNumber = (key: keyof SoilFields, raw: string) => {
+    const next = { ...inputsRef.current, [key]: raw === '' ? Number.NaN : Number(raw) };
+    inputsRef.current = next;
+    setInputs(next);
   };
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in">
-      <div className="bg-gradient-to-r from-green-600 to-green-800 rounded-3xl p-8 text-white">
-        <div className="flex items-center mb-3">
-          <Sprout className="w-8 h-8 mr-3" />
-          <h1 className="text-3xl font-bold">{isHindi ? "मिट्टी विश्लेषण" : "Soil Analysis"}</h1>
+    <PageFrame
+      icon={<Sprout className="h-5 w-5" />}
+      title={hi ? 'मिट्टी विश्लेषण' : 'Soil Analysis'}
+      description={hi
+        ? 'pH, N, P, K और जैविक पदार्थ भरें। फसल सुझाव इसी डेमो गणना से आते हैं।'
+        : 'Enter pH, nitrogen, phosphorus, potassium, and organic matter. Crop ideas come from this demo calculation.'}
+    >
+      <Panel>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field id="soil-ph" label={hi ? 'pH (0–14)' : 'pH (0–14)'} hint={hi ? '7 तटस्थ है' : '7 is neutral'} error={errors.find((item) => item.startsWith('pH'))}>
+            <TextInput id="soil-ph" type="number" step="0.1" min="0" max="14" inputMode="decimal" value={show(inputs.pH)} aria-describedby="soil-ph-hint" invalid={errors.some((item) => item.startsWith('pH'))} onChange={(event) => setNumber('pH', event.target.value)} />
+          </Field>
+          <Field id="soil-n" label={hi ? 'नाइट्रोजन (ppm)' : 'Nitrogen (ppm)'}>
+            <TextInput id="soil-n" type="number" min="0" inputMode="decimal" value={show(inputs.nitrogen)} invalid={errors.includes('nitrogen')} onChange={(event) => setNumber('nitrogen', event.target.value)} />
+          </Field>
+          <Field id="soil-p" label={hi ? 'फॉस्फोरस (ppm)' : 'Phosphorus (ppm)'}>
+            <TextInput id="soil-p" type="number" min="0" inputMode="decimal" value={show(inputs.phosphorus)} invalid={errors.includes('phosphorus')} onChange={(event) => setNumber('phosphorus', event.target.value)} />
+          </Field>
+          <Field id="soil-k" label={hi ? 'पोटेशियम (ppm)' : 'Potassium (ppm)'}>
+            <TextInput id="soil-k" type="number" min="0" inputMode="decimal" value={show(inputs.potassium)} invalid={errors.includes('potassium')} onChange={(event) => setNumber('potassium', event.target.value)} />
+          </Field>
+          <Field id="soil-om" label={hi ? 'जैविक पदार्थ (%)' : 'Organic matter (%)'} error={errors.includes('organic matter') ? (hi ? 'जैविक पदार्थ जाँचें' : 'Check organic matter') : undefined}>
+            <TextInput id="soil-om" type="number" step="0.1" min="0" inputMode="decimal" value={show(inputs.organicMatter)} invalid={errors.includes('organic matter')} onChange={(event) => setNumber('organicMatter', event.target.value)} />
+          </Field>
         </div>
-        <p className="text-green-100">{isHindi ? "अपनी मिट्टी के डेटा को दर्ज करें और सुधार सुझाव प्राप्त करें" : "Enter your soil data to get analysis and improvement recommendations"}</p>
-      </div>
-
-      <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 space-y-4 transition-colors">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-2">{isHindi ? "pH स्तर" : "pH Level"}</label>
-            <input
-              type="number"
-              step="0.1"
-              min="0"
-              max="14"
-              value={inputs.pH}
-              onChange={(e) => setInputs({ ...inputs, pH: parseFloat(e.target.value) })}
-              className="w-full px-4 py-2 border rounded-lg dark:bg-slate-700 dark:border-slate-600"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-2">{isHindi ? "नाइट्रोजन (ppm)" : "Nitrogen (ppm)"}</label>
-            <input
-              type="number"
-              value={inputs.nitrogen}
-              onChange={(e) => setInputs({ ...inputs, nitrogen: parseFloat(e.target.value) })}
-              className="w-full px-4 py-2 border rounded-lg dark:bg-slate-700 dark:border-slate-600"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-2">{isHindi ? "फॉस्फोरस (ppm)" : "Phosphorus (ppm)"}</label>
-            <input
-              type="number"
-              value={inputs.phosphorus}
-              onChange={(e) => setInputs({ ...inputs, phosphorus: parseFloat(e.target.value) })}
-              className="w-full px-4 py-2 border rounded-lg dark:bg-slate-700 dark:border-slate-600"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-2">{isHindi ? "पोटेशियम (ppm)" : "Potassium (ppm)"}</label>
-            <input
-              type="number"
-              value={inputs.potassium}
-              onChange={(e) => setInputs({ ...inputs, potassium: parseFloat(e.target.value) })}
-              className="w-full px-4 py-2 border rounded-lg dark:bg-slate-700 dark:border-slate-600"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-2">{isHindi ? "जैविक पदार्थ (%)" : "Organic Matter (%)"}</label>
-            <input
-              type="number"
-              step="0.1"
-              value={inputs.organicMatter}
-              onChange={(e) => setInputs({ ...inputs, organicMatter: parseFloat(e.target.value) })}
-              className="w-full px-4 py-2 border rounded-lg dark:bg-slate-700 dark:border-slate-600"
-            />
-          </div>
+        {errors.length > 0 && <div className="mt-3"><Callout tone="danger">{hi ? 'ये मान जाँचें: ' : 'Check these values: '}{errors.join(', ')}</Callout></div>}
+        <div className="mt-4">
+          <PrimaryButton onClick={() => { void execute(); }} disabled={loading} aria-busy={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {hi ? 'मिट्टी का विश्लेषण करें' : 'Analyze soil'}
+          </PrimaryButton>
         </div>
+      </Panel>
 
-        <button
-          onClick={handleAnalyze}
-          disabled={loading}
-          className="w-full px-6 py-3 bg-green-600 text-white rounded-xl hover:bg-green-700 disabled:bg-gray-400 font-medium"
-        >
-          {loading ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
-              {isHindi ? "विश्लेषण..." : "Analyzing..."}
-            </>
-          ) : (
-            isHindi ? "विश्लेषण करें" : "Analyze"
-          )}
-        </button>
-      </div>
-
-      {soilData && (
+      {soilData && summary && (
         <div className="space-y-4">
-          <DemoBadge language={language} />
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            <div className="bg-blue-50 dark:bg-blue-900/30 p-4 rounded-xl">
-              <p className="text-xs text-gray-600 dark:text-gray-400">{isHindi ? "pH" : "pH"}</p>
-              <p className="text-2xl font-bold text-blue-600">{soilData.pH}</p>
-            </div>
-            <div className="bg-green-50 dark:bg-green-900/30 p-4 rounded-xl">
-              <p className="text-xs text-gray-600 dark:text-gray-400">{isHindi ? "नाइट्रोजन" : "Nitrogen"}</p>
-              <p className="text-2xl font-bold text-green-600">{soilData.nitrogen}</p>
-            </div>
-            <div className="bg-yellow-50 dark:bg-yellow-900/30 p-4 rounded-xl">
-              <p className="text-xs text-gray-600 dark:text-gray-400">{isHindi ? "फॉस्फोरस" : "Phosphorus"}</p>
-              <p className="text-2xl font-bold text-yellow-600">{soilData.phosphorus}</p>
-            </div>
+          <div className="flex items-center gap-2"><DemoBadge language={language} /><span className="text-sm text-slate-500">{summary}</span></div>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+            <Stat label="pH" value={soilData.pH} />
+            <Stat label={hi ? 'नाइट्रोजन' : 'Nitrogen'} value={soilData.nitrogen} detail="ppm" />
+            <Stat label={hi ? 'फॉस्फोरस' : 'Phosphorus'} value={soilData.phosphorus} detail="ppm" />
           </div>
-
-          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl space-y-4 transition-colors">
-            <div>
-              <h3 className="font-bold mb-2">{isHindi ? "अनुशंसित फसलें" : "Suitable Crops"}</h3>
-              <div className="flex flex-wrap gap-2">
-                {soilData.cropSuitability.map((crop, i) => (
-                  <span key={i} className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm">
-                    {crop}
-                  </span>
-                ))}
-              </div>
+          <Panel>
+            <h2 className="text-sm font-semibold text-slate-900 dark:text-white">{hi ? 'अनुशंसित फसलें' : 'Suitable crops'}</h2>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {soilData.cropSuitability.map((crop) => (
+                <span key={crop} className="rounded-full bg-agri-50 px-2.5 py-1 text-sm text-agri-900 dark:bg-agri-900/40 dark:text-agri-100">{crop}</span>
+              ))}
             </div>
-
-            <div>
-              <h3 className="font-bold mb-2">{isHindi ? "सुधार सिफारिशें" : "Recommendations"}</h3>
-              <ul className="space-y-2">
-                {soilData.recommendations.map((rec, i) => (
-                  <li key={i} className="flex items-start">
-                    <span className="text-green-600 mr-2">✓</span>
-                    <span className="text-sm">{rec}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
+            <h2 className="mt-4 text-sm font-semibold text-slate-900 dark:text-white">{hi ? 'सुझाव' : 'Recommendations'}</h2>
+            <ul className="mt-2 space-y-1.5 text-sm text-slate-700 dark:text-slate-200">
+              {soilData.recommendations.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </Panel>
         </div>
       )}
-    </div>
+    </PageFrame>
   );
 };
 

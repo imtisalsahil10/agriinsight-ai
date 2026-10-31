@@ -87,4 +87,6 @@ export interface VoiceSession {
   setMode(mode: VoiceMode): void;
   /** Speak extra text, or pass it into a Live session that owns the turn. */
   inject(text: string): void;
+  /** Speak locally without sending the line to a Live model. */
+  say(text: string): void;
 }

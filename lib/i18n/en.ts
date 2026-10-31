@@ -67,6 +67,19 @@ export const en = {
   field_wake: 'Hey Kisan phrase',
   field_wake_help: 'Checked only while the mic is already on. No background listening.',
   field_rate_help: 'Fallback voice only. Live speech follows the model.',
+  assistant_title: 'Assistant',
+  assistant_open: 'Open voice assistant',
+  assistant_close: 'Close voice assistant',
+  assistant_stop: 'Stop',
+  assistant_send: 'Send to assistant',
+  assistant_placeholder: 'Type a command or question',
+  assistant_hint: 'Try “go to soil analysis”, “analyze this image”, or “read my latest results”.',
+  assistant_listening: 'Listening',
+  assistant_thinking: 'Working on that',
+  assistant_speaking: 'Speaking',
+  assistant_idle: 'Ready on this page',
+  assistant_listen: 'Listen',
+  assistant_send_voice: 'Send voice',
 } as const;
 
 export type MessageKey = keyof typeof en;

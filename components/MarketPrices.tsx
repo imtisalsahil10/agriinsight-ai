@@ -1,106 +1,125 @@
-import React, { useState } from 'react';
-import { TrendingUp, Loader2, ArrowUp, ArrowDown } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { ArrowDown, ArrowUp, Loader2, Minus, TrendingUp } from 'lucide-react';
+import { usePageAssistant } from './assistant/context';
 import DemoBadge from './voice/DemoBadge';
+import { EmptyState, Field, PageFrame, Panel, PrimaryButton, TextInput } from './ui/ui';
+import { explainView } from '../lib/assistant/copy';
+import { textMissing } from '../lib/assistant/validate';
+import { rememberSummary } from '../lib/farm/store';
 import { getMarketPrices } from '../lib/tools/market';
-import { CropPrice } from '../types';
+import type { CropPrice, Language } from '../types';
 
-interface MarketPricesProps {
-  language: 'en-US' | 'hi-IN';
-}
-
-const MarketPrices: React.FC<MarketPricesProps> = ({ language }) => {
-  const isHindi = language === 'hi-IN';
-  const [prices, setPrices] = useState<CropPrice[]>([]);
-  const [loading, setLoading] = useState(false);
+const MarketPrices: React.FC<{ language: Language }> = ({ language }) => {
+  const hi = language === 'hi-IN';
   const [region, setRegion] = useState('Punjab');
   const [cropFilters, setCropFilters] = useState('');
+  const [prices, setPrices] = useState<CropPrice[]>([]);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const regionRef = useRef(region);
+  const cropRef = useRef(cropFilters);
+  const summaryRef = useRef<string | null>(null);
+  const running = useRef(false);
+  regionRef.current = region;
+  cropRef.current = cropFilters;
 
-  const handleFetch = () => {
+  const execute = async () => {
+    if (!regionRef.current.trim()) {
+      const message = hi ? 'क्षेत्र का नाम चाहिए।' : 'A region is required.';
+      setError(message);
+      return { ok: false, summary: message };
+    }
+    if (running.current) return { ok: false, summary: hi ? 'भाव पहले से लोड हो रहे हैं।' : 'Prices are already loading.' };
+    running.current = true;
     setLoading(true);
-    setPrices(getMarketPrices(region, cropFilters).data);
-    setLoading(false);
+    setError('');
+    try {
+      const result = getMarketPrices(regionRef.current, cropRef.current);
+      if (!result.ok) return { ok: false, summary: result.summary };
+      setPrices(result.data);
+      setSummary(result.summary);
+      summaryRef.current = result.summary;
+      rememberSummary(result.summary);
+      return { ok: true, summary: result.summary };
+    } finally {
+      running.current = false;
+      setLoading(false);
+    }
   };
 
+  usePageAssistant({
+    view: 'market',
+    language,
+    explain: () => explainView('market', language),
+    read: () => summaryRef.current,
+    apply: (patch) => {
+      if (patch.region) {
+        regionRef.current = patch.region;
+        setRegion(patch.region);
+      }
+      if (patch.crop) {
+        cropRef.current = patch.crop;
+        setCropFilters(patch.crop);
+      }
+    },
+    missing: () => textMissing(regionRef.current, hi ? 'क्षेत्र' : 'a region'),
+    run: execute,
+  });
+
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6 animate-in fade-in">
-      <div className="bg-gradient-to-r from-purple-600 to-purple-800 rounded-3xl p-8 text-white">
-        <div className="flex items-center mb-3">
-          <TrendingUp className="w-8 h-8 mr-3" />
-          <h1 className="text-3xl font-bold">{isHindi ? "बाजार मूल्य" : "Market Prices"}</h1>
+    <PageFrame
+      icon={<TrendingUp className="h-5 w-5" />}
+      title={hi ? 'बाजार भाव' : 'Market Prices'}
+      description={hi
+        ? 'ये डेमो भाव हैं, लाइव मंडी भाव नहीं। फसल और क्षेत्र चुनकर सूची लाएँ।'
+        : 'These are demo prices, not a live mandi quote. Choose a crop and region, then fetch the list.'}
+    >
+      <Panel>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field id="market-region" label={hi ? 'क्षेत्र' : 'Region'} error={error || undefined}>
+            <TextInput id="market-region" value={region} invalid={Boolean(error)} onChange={(event) => { regionRef.current = event.target.value; setRegion(event.target.value); }} />
+          </Field>
+          <Field id="market-crops" label={hi ? 'फसलें' : 'Crops'} hint={hi ? 'खाली छोड़ें तो सारी डेमो फसलें' : 'Leave empty for every demo crop'}>
+            <TextInput id="market-crops" value={cropFilters} aria-describedby="market-crops-hint" placeholder={hi ? 'गेहूँ, चावल' : 'wheat, rice'} onChange={(event) => { cropRef.current = event.target.value; setCropFilters(event.target.value); }} />
+          </Field>
         </div>
-        <p className="text-purple-100">{isHindi ? "अपने क्षेत्र में वर्तमान फसल मूल्य और रुझान देखें" : "Check current crop prices and market trends in your region"}</p>
-      </div>
-
-      <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 space-y-4 transition-colors">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-2">{isHindi ? "क्षेत्र" : "Region"}</label>
-            <input
-              value={region}
-              onChange={(e) => setRegion(e.target.value)}
-              placeholder={isHindi ? "कोई भी क्षेत्र दर्ज करें" : "Enter any region"}
-              className="w-full px-4 py-2 border rounded-lg dark:bg-slate-700 dark:border-slate-600"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2">{isHindi ? "फसलें (कॉमा से अलग करें)" : "Crops (comma-separated)"}</label>
-            <input
-              value={cropFilters}
-              onChange={(e) => setCropFilters(e.target.value)}
-              placeholder={isHindi ? "उदाहरण: गेहूँ, चावल" : "e.g., wheat, rice"}
-              className="w-full px-4 py-2 border rounded-lg dark:bg-slate-700 dark:border-slate-600"
-            />
-          </div>
+        <div className="mt-4">
+          <PrimaryButton onClick={() => { void execute(); }} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {hi ? 'डेमो भाव लाएँ' : 'Fetch demo prices'}
+          </PrimaryButton>
         </div>
+      </Panel>
 
-        <button
-          onClick={handleFetch}
-          disabled={loading}
-          className="w-full px-6 py-3 bg-purple-600 text-white rounded-xl hover:bg-purple-700 disabled:bg-gray-400 font-medium"
-        >
-          {loading ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
-              {isHindi ? "लोड हो रहा है..." : "Loading..."}
-            </>
-          ) : (
-            isHindi ? "मूल्य लाएं" : "Fetch Prices"
-          )}
-        </button>
-      </div>
+      {summary && prices.length === 0 && !loading && (
+        <EmptyState icon={<TrendingUp className="h-8 w-8" />} title={hi ? 'कोई पंक्ति नहीं मिली' : 'No matching rows'} body={summary} />
+      )}
 
       {prices.length > 0 && (
-        <div className="space-y-4">
+        <div className="space-y-3">
           <DemoBadge language={language} />
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {prices.map((price, i) => (
-            <div key={i} className="bg-white dark:bg-slate-800 p-4 rounded-xl border border-gray-200 dark:border-slate-700 transition-colors">
-              <div className="flex justify-between items-start mb-3">
-                <div>
-                  <h3 className="font-bold text-lg">{price.cropName}</h3>
-                  <p className="text-xs text-gray-500">₹ {price.currentPrice}/quintal • {price.region}</p>
+          <div className="grid gap-3 md:grid-cols-2">
+            {prices.map((price) => (
+              <Panel key={`${price.cropName}-${price.region}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{price.cropName}</h2>
+                    <p className="text-sm text-slate-500">₹{price.currentPrice} / {hi ? 'क्विंटल' : 'quintal'} · {price.region}</p>
+                    <p className="text-xs text-slate-400">{price.date} · {hi ? 'डेमो' : 'Demo'}</p>
+                  </div>
+                  {price.trend === 'up' ? <ArrowUp className="h-5 w-5 text-agri-700" /> : price.trend === 'down' ? <ArrowDown className="h-5 w-5 text-red-600" /> : <Minus className="h-5 w-5 text-slate-400" />}
                 </div>
-                <div className={`flex items-center ${price.trend === 'up' ? 'text-green-600' : price.trend === 'down' ? 'text-red-600' : 'text-gray-600'}`}>
-                  {price.trend === 'up' ? <ArrowUp className="w-5 h-5" /> : price.trend === 'down' ? <ArrowDown className="w-5 h-5" /> : '→'}
+                <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                  <div className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-900"><p className="text-xs text-slate-500">{hi ? 'न्यूनतम' : 'Min'}</p><p className="font-semibold">₹{price.minPrice}</p></div>
+                  <div className="rounded-lg bg-slate-50 px-3 py-2 dark:bg-slate-900"><p className="text-xs text-slate-500">{hi ? 'अधिकतम' : 'Max'}</p><p className="font-semibold">₹{price.maxPrice}</p></div>
                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <div className="bg-gray-50 dark:bg-slate-700 p-2 rounded">
-                  <p className="text-gray-600 dark:text-gray-400">{isHindi ? "न्यूनतम" : "Min"}</p>
-                  <p className="font-bold">₹{price.minPrice}</p>
-                </div>
-                <div className="bg-gray-50 dark:bg-slate-700 p-2 rounded">
-                  <p className="text-gray-600 dark:text-gray-400">{isHindi ? "अधिकतम" : "Max"}</p>
-                  <p className="font-bold">₹{price.maxPrice}</p>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+              </Panel>
+            ))}
+          </div>
         </div>
       )}
-    </div>
+    </PageFrame>
   );
 };
 

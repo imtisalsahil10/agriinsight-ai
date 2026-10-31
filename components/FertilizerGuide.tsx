@@ -1,152 +1,151 @@
-import React, { useState } from 'react';
-import { Beaker, Loader2, Search } from 'lucide-react';
-import { FertilizerGuide } from '../types';
+import React, { useRef, useState } from 'react';
+import { Beaker, Loader2 } from 'lucide-react';
+import { usePageAssistant } from './assistant/context';
+import { Callout, Field, PageFrame, Panel, PrimaryButton, TextInput } from './ui/ui';
+import { explainView } from '../lib/assistant/copy';
+import { textMissing } from '../lib/assistant/validate';
+import { rememberSummary } from '../lib/farm/store';
+import type { FertilizerGuide, Language } from '../types';
 
-interface FertilizerGuideProps {
-  language: 'en-US' | 'hi-IN';
+const GUIDES: Record<string, FertilizerGuide[]> = {
+  wheat: [
+    {
+      name: 'NPK 10:26:26',
+      type: 'chemical',
+      cropSuitable: ['Wheat', 'Rice', 'Corn'],
+      dosage: '100-150 kg/hectare',
+      applicationTime: 'At planting',
+      safetyPrecautions: ['Wear gloves', 'Avoid dust inhalation', 'Store in a dry place'],
+      cost: '₹5000-6000/bag',
+    },
+    {
+      name: 'Compost/FYM',
+      type: 'organic',
+      cropSuitable: ['All crops'],
+      dosage: '10-15 tons/hectare',
+      applicationTime: 'Before planting',
+      safetyPrecautions: ['Use fully decomposed material', 'Keep weed seeds out'],
+      cost: '₹2000-3000/load',
+    },
+    {
+      name: 'Urea',
+      type: 'chemical',
+      cropSuitable: ['Wheat', 'Rice', 'Corn'],
+      dosage: '100-120 kg/hectare',
+      applicationTime: 'In splits — 50% at planting, 50% at tillering',
+      safetyPrecautions: ['Use in adequate moisture', 'Avoid direct contact'],
+      cost: '₹3500-4000/bag',
+    },
+  ],
+};
+
+function lookup(crop: string): FertilizerGuide[] {
+  const primary = crop.split(',').map((item) => item.trim().toLowerCase()).filter(Boolean)[0] || 'wheat';
+  return GUIDES[primary] || GUIDES.wheat;
 }
 
-const FertilizerGuideComp: React.FC<FertilizerGuideProps> = ({ language }) => {
-  const isHindi = language === 'hi-IN';
+const FertilizerGuideComp: React.FC<{ language: Language }> = ({ language }) => {
+  const hi = language === 'hi-IN';
+  const [cropType, setCropType] = useState('wheat');
+  const [concern, setConcern] = useState('');
   const [fertilizers, setFertilizers] = useState<FertilizerGuide[]>([]);
   const [loading, setLoading] = useState(false);
-  const [cropType, setCropType] = useState('wheat');
+  const [error, setError] = useState('');
+  const cropRef = useRef(cropType);
+  const concernRef = useRef('');
+  const summaryRef = useRef<string | null>(null);
+  const running = useRef(false);
+  cropRef.current = cropType;
 
-  const mockFertilizers: { [key: string]: FertilizerGuide[] } = {
-    wheat: [
-      {
-        name: 'NPK 10:26:26',
-        type: 'chemical',
-        cropSuitable: ['Wheat', 'Rice', 'Corn'],
-        dosage: '100-150 kg/hectare',
-        applicationTime: 'At planting',
-        safetyPrecautions: ['Wear gloves', 'Avoid dust inhalation', 'Store in dry place'],
-        cost: '₹5000-6000/bag'
-      },
-      {
-        name: 'Compost/FYM',
-        type: 'organic',
-        cropSuitable: ['All crops'],
-        dosage: '10-15 tons/hectare',
-        applicationTime: 'Before planting',
-        safetyPrecautions: ['Fully decomposed', 'Free from weed seeds'],
-        cost: '₹2000-3000/load'
-      },
-      {
-        name: 'Urea',
-        type: 'chemical',
-        cropSuitable: ['Wheat', 'Rice', 'Corn'],
-        dosage: '100-120 kg/hectare',
-        applicationTime: 'In splits - 50% at planting, 50% at tillering',
-        safetyPrecautions: ['Use in adequate moisture', 'Avoid direct contact'],
-        cost: '₹3500-4000/bag'
-      }
-    ]
-  };
-
-  const handleSearch = async () => {
+  const execute = async () => {
+    if (!cropRef.current.trim()) {
+      const message = hi ? 'फसल का नाम चाहिए।' : 'A crop name is required.';
+      setError(message);
+      return { ok: false, summary: message };
+    }
+    if (running.current) return { ok: false, summary: hi ? 'खोज पहले से चल रही है।' : 'That search is already running.' };
+    running.current = true;
     setLoading(true);
-    setTimeout(() => {
-      const primaryCrop = cropType.split(',').map((c) => c.trim().toLowerCase()).filter(Boolean)[0] || 'wheat';
-      setFertilizers(mockFertilizers[primaryCrop] || mockFertilizers.wheat);
+    setError('');
+    try {
+      await new Promise((resolve) => window.setTimeout(resolve, 400));
+      const rows = lookup(cropRef.current);
+      setFertilizers(rows);
+      const names = rows.map((row) => row.name).join(', ');
+      const concernLine = concernRef.current
+        ? ` You mentioned ${concernRef.current}. This list is the crop reference, not a soil test.`
+        : '';
+      const summary = `Reference fertilizer guide for ${cropRef.current}: ${names}.${concernLine}`;
+      summaryRef.current = summary;
+      rememberSummary(summary);
+      return { ok: true, summary };
+    } finally {
+      running.current = false;
       setLoading(false);
-    }, 800);
+    }
   };
+
+  usePageAssistant({
+    view: 'fertilizer',
+    language,
+    explain: () => explainView('fertilizer', language),
+    read: () => summaryRef.current,
+    apply: (patch) => {
+      if (patch.crop) {
+        cropRef.current = patch.crop;
+        setCropType(patch.crop);
+      }
+      if (patch.concern) {
+        concernRef.current = patch.concern;
+        setConcern(patch.concern);
+      }
+      setError('');
+    },
+    missing: () => textMissing(cropRef.current, hi ? 'फसल का नाम' : 'a crop name'),
+    run: execute,
+  });
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6 animate-in fade-in">
-      <div className="bg-gradient-to-r from-lime-600 to-lime-800 rounded-3xl p-8 text-white">
-        <div className="flex items-center mb-3">
-          <Beaker className="w-8 h-8 mr-3" />
-          <h1 className="text-3xl font-bold">{isHindi ? "खाद गाइड" : "Fertilizer Guide"}</h1>
+    <PageFrame
+      icon={<Beaker className="h-5 w-5" />}
+      title={hi ? 'खाद गाइड' : 'Fertilizer'}
+      description={hi
+        ? 'फसल के अनुसार संदर्भ खुराक। यह मिट्टी जाँच नहीं है।'
+        : 'Reference doses for a crop. This is not a soil test.'}
+    >
+      <Panel>
+        <Field id="fert-crop" label={hi ? 'फसल' : 'Crop'} error={error || undefined}>
+          <TextInput id="fert-crop" value={cropType} invalid={Boolean(error)} onChange={(event) => { cropRef.current = event.target.value; setCropType(event.target.value); }} placeholder={hi ? 'गेहूँ' : 'wheat'} />
+        </Field>
+        {concern && <div className="mt-3"><Callout tone="info">{hi ? 'आपकी बात: ' : 'You mentioned: '}{concern}</Callout></div>}
+        <div className="mt-4">
+          <PrimaryButton onClick={() => { void execute(); }} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {hi ? 'खाद देखें' : 'Find fertilizers'}
+          </PrimaryButton>
         </div>
-        <p className="text-lime-100">{isHindi ? "अपनी फसल के लिए सही खाद और खुराक खोजें" : "Find the right fertilizer with dosage and application guidelines"}</p>
-      </div>
-
-      <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 space-y-4 transition-colors">
-        <div>
-          <label className="block text-sm font-medium mb-2">{isHindi ? "फसल (कॉमा से अलग करें)" : "Crop (comma-separated)"}</label>
-          <input
-            value={cropType}
-            onChange={(e) => setCropType(e.target.value)}
-            placeholder={isHindi ? "उदाहरण: गेहूँ, मक्का" : "e.g., wheat, corn"}
-            className="w-full px-4 py-2 border rounded-lg dark:bg-slate-700 dark:border-slate-600"
-          />
-        </div>
-
-        <button
-          onClick={handleSearch}
-          disabled={loading}
-          className="w-full px-6 py-3 bg-lime-600 text-white rounded-xl hover:bg-lime-700 disabled:bg-gray-400 font-medium flex items-center justify-center"
-        >
-          {loading ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              {isHindi ? "खोज रहे हैं..." : "Searching..."}
-            </>
-          ) : (
-            <>
-              <Search className="w-4 h-4 mr-2" />
-              {isHindi ? "खाद खोजें" : "Find Fertilizers"}
-            </>
-          )}
-        </button>
-      </div>
-
-      {fertilizers.length > 0 && (
-        <div className="space-y-4">
-          {fertilizers.map((fert, i) => (
-            <div key={i} className="bg-white dark:bg-slate-800 p-6 rounded-xl border border-gray-200 dark:border-slate-700 transition-colors">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <h3 className="text-xl font-bold">{fert.name}</h3>
-                  <span className={`text-xs font-bold px-2 py-1 rounded mt-1 inline-block ${
-                    fert.type === 'organic' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'
-                  }`}>
-                    {fert.type.toUpperCase()}
-                  </span>
-                </div>
-                <span className="text-sm font-bold text-lime-600">{fert.cost}</span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-                <div>
-                  <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">{isHindi ? "खुराक" : "Dosage"}</p>
-                  <p className="font-semibold">{fert.dosage}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-600 dark:text-gray-400 font-medium">{isHindi ? "आवेदन समय" : "Application Time"}</p>
-                  <p className="font-semibold">{fert.applicationTime}</p>
-                </div>
-              </div>
-
-              <div className="mb-3">
-                <p className="text-xs text-gray-600 dark:text-gray-400 font-medium mb-2">{isHindi ? "सुरक्षा सावधानियां" : "Safety Precautions"}</p>
-                <ul className="text-sm space-y-1">
-                  {fert.safetyPrecautions.map((precaution, j) => (
-                    <li key={j} className="flex items-center">
-                      <span className="text-lime-600 mr-2">✓</span>
-                      {precaution}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-
+      </Panel>
+      <div className="space-y-3">
+        {fertilizers.map((fert) => (
+          <Panel key={fert.name}>
+            <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-xs text-gray-600 dark:text-gray-400 font-medium mb-2">{isHindi ? "उपयुक्त फसलें" : "Suitable Crops"}</p>
-                <div className="flex flex-wrap gap-2">
-                  {fert.cropSuitable.map((crop, j) => (
-                    <span key={j} className="bg-gray-100 dark:bg-slate-700 text-xs px-2 py-1 rounded">
-                      {crop}
-                    </span>
-                  ))}
-                </div>
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{fert.name}</h2>
+                <p className="mt-1 text-xs font-semibold uppercase tracking-wide text-slate-500">{fert.type}</p>
               </div>
+              <p className="text-sm font-medium text-agri-800 dark:text-agri-200">{fert.cost}</p>
             </div>
-          ))}
-        </div>
-      )}
-    </div>
+            <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+              <div><dt className="text-xs text-slate-500">{hi ? 'खुराक' : 'Dosage'}</dt><dd className="font-medium">{fert.dosage}</dd></div>
+              <div><dt className="text-xs text-slate-500">{hi ? 'समय' : 'When'}</dt><dd className="font-medium">{fert.applicationTime}</dd></div>
+            </dl>
+            <ul className="mt-3 space-y-1 text-sm text-slate-700 dark:text-slate-200">
+              {fert.safetyPrecautions.map((item) => <li key={item}>{item}</li>)}
+            </ul>
+          </Panel>
+        ))}
+      </div>
+    </PageFrame>
   );
 };
 
