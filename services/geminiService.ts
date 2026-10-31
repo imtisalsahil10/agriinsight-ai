@@ -21,7 +21,7 @@ async function postGemini<T>(body: unknown): Promise<T> {
     const message = typeof data === 'object' && data && 'error' in data && typeof data.error === 'string'
       ? data.error
       : 'Failed to get response from AgriInsight.';
-    throw new Error(message);
+    throw new Error(message === 'quota' ? 'quota' : message);
   }
   return data as T;
 }
@@ -90,7 +90,7 @@ export const streamResponse = async (
       const message = typeof data === 'object' && data && 'error' in data && typeof data.error === 'string'
         ? data.error
         : 'Failed to get response from AgriInsight.';
-      throw new Error(message);
+      throw new Error(message === 'quota' ? 'quota' : message);
     }
     const payload = data as ChatResponse;
     const text = payload.text ?? '';

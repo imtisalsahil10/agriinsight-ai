@@ -20,6 +20,7 @@ export const en = {
   nav_chat: 'Chat',
   nav_settings: 'Settings',
   chat_error: "I'm sorry, I encountered an error while processing your request. Please check your connection and try again.",
+  chat_error_quota: 'Chat is paused because the Gemini quota is used up. Voice can still work. Check the API plan, then try again.',
   chat_placeholder: 'Ask about crops, pests, or weather...',
   chat_analyzing: 'Analyzing data...',
   chat_upload: 'Upload image',

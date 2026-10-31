@@ -19,6 +19,11 @@ function missingKey(error: unknown): boolean {
   return error instanceof Error && error.message === 'GEMINI_API_KEY is not configured';
 }
 
+function quotaExceeded(error: unknown): boolean {
+  const raw = error instanceof Error ? error.message : '';
+  return raw.includes('RESOURCE_EXHAUSTED') || raw.includes('exceeded your current quota');
+}
+
 export async function dispatch(route: ApiRoute, method: string | undefined, ip: string, body: unknown, signal?: AbortSignal): Promise<ApiResult> {
   const started = Date.now();
   if (method !== 'POST') {
@@ -72,10 +77,12 @@ export async function dispatch(route: ApiRoute, method: string | undefined, ip: 
     log(route, 'chat', 200, started);
     return { status: 200, body: chat };
   } catch (error) {
-    const status = missingKey(error) ? 500 : 502;
+    const status = missingKey(error) ? 500 : quotaExceeded(error) ? 429 : 502;
     const message = missingKey(error)
       ? 'GEMINI_API_KEY is not configured'
-      : 'Gemini request failed';
+      : quotaExceeded(error)
+        ? 'quota'
+        : 'Gemini request failed';
     console.error(JSON.stringify({
       route,
       status,

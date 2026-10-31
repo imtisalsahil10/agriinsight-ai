@@ -339,7 +339,7 @@ const AppShell: React.FC = () => {
       return aiText;
     } catch (error) {
       console.error(error);
-      const message = t(languageRef.current, 'chat_error');
+      const message = t(languageRef.current, error instanceof Error && error.message === 'quota' ? 'chat_error_quota' : 'chat_error');
       remember({ id: crypto.randomUUID(), role: 'model', content: message, timestamp: Date.now() });
       loadingRef.current = 'error';
       setLoadingState('error');
@@ -529,7 +529,7 @@ const AppShell: React.FC = () => {
       remember({
         id: crypto.randomUUID(),
         role: 'model',
-        content: t(languageRef.current, 'chat_error'),
+        content: t(languageRef.current, error instanceof Error && error.message === 'quota' ? 'chat_error_quota' : 'chat_error'),
         timestamp: Date.now()
       });
       loadingRef.current = 'error';

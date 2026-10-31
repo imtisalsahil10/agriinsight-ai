@@ -12,6 +12,7 @@ import {
   PcmPlayer,
 } from './pcmPlayer';
 import { MAX_RECONNECTS, reconnectDelayMs, socketClosePlan } from './reconnect';
+import { liveLanguageRule, transcriptionLanguages } from './liveLanguage';
 import { mergeTranscript } from './transcript';
 import type { ProviderEvent, VoiceMode, VoiceProvider } from './types';
 
@@ -167,7 +168,8 @@ export function createGeminiLiveProvider(options: GeminiLiveOptions): VoiceProvi
     const crops = farm.crops.length ? ` Crops: ${farm.crops.join(', ')}.` : '';
     const place = farm.location ? ` Location: ${farm.location}.` : '';
     return `You are AgriInsight, speaking with a farmer. Use short spoken sentences.
-Reply in Hindi (Devanagari) when the farmer speaks Hindi. If they mix Hindi and English, reply in the same mix. If they say "Hindi mein bolo" or "English mein bolo", switch and stay there.
+${liveLanguageRule(options.language())}
+If they say "Hindi mein bolo" or "English mein bolo", switch and stay there.
 Use tools for weather, prices, irrigation, soil, yield, disease, notes, and reminders. Never invent a live market price. If a tool result is demo data, say it is demo data.${place}${crops}${memory}`;
   }
 
@@ -332,19 +334,19 @@ Use tools for weather, prices, irrigation, soil, yield, disease, notes, and remi
       httpOptions: { apiVersion: LIVE_API_VERSION },
     });
     const language = options.language();
+    const heardIn = { languageCodes: transcriptionLanguages(language) };
     ensurePlayer();
     const session = await ai.live.connect({
       model: LIVE_MODEL,
       config: {
         responseModalities: [Modality.AUDIO],
-        inputAudioTranscription: {},
-        outputAudioTranscription: {},
+        inputAudioTranscription: heardIn,
+        outputAudioTranscription: heardIn,
         systemInstruction: systemInstruction(),
         tools: [{ functionDeclarations: toolDeclarations }],
         sessionResumption: resumeHandle ? { handle: resumeHandle } : {},
         contextWindowCompression: { slidingWindow: {} },
         speechConfig: {
-          languageCode: language,
           voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceFor(language) } },
         },
       },
