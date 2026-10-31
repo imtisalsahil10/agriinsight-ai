@@ -31,3 +31,51 @@ html.high-contrast .dark\:bg-slate-900 {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+@layer components {
+  .page-shell {
+    @apply mx-auto w-full max-w-6xl space-y-5 p-4 pb-28 md:p-6 lg:p-8;
+  }
+  .surface {
+    @apply rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-800;
+  }
+  .field-label {
+    @apply mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-200;
+  }
+  .field-input {
+    @apply min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-slate-900 placeholder:text-slate-400 focus:border-agri-700 focus:outline-none focus:ring-2 focus:ring-agri-700/25 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100;
+  }
+  .field-hint {
+    @apply mt-1 text-xs text-slate-500 dark:text-slate-400;
+  }
+  .field-error {
+    @apply mt-1 text-xs font-medium text-red-700 dark:text-red-300;
+  }
+  .btn-primary {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-agri-700 px-4 font-semibold text-white transition-colors hover:bg-agri-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-agri-700 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500;
+  }
+  .btn-secondary {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 font-semibold text-slate-800 transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-agri-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800;
+  }
+  .btn-ghost {
+    @apply inline-flex h-11 w-11 items-center justify-center rounded-xl text-slate-500 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-agri-700 dark:text-slate-300 dark:hover:bg-slate-700;
+  }
+}
+
+.page-enter {
+  animation: page-rise 0.28s ease;
+}
+
+@keyframes page-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter {
+    animation: none;
+  }
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+  }
+}

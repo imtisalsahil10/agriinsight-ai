@@ -6,6 +6,10 @@ import { createSpeechPlanner } from './speechText';
 import type { ToolResult } from '../tools/types';
 import type { ProviderEvent, ReplyRequest, ReplyResult, SessionState, VoiceMode, VoiceProvider, VoiceSession } from './types';
 
+export type LocalTurn =
+  | { action: 'reply'; text: string }
+  | { action: 'stop' };
+
 export interface VoiceSessionOptions {
   provider: VoiceProvider;
   language: () => Language;
@@ -16,6 +20,9 @@ export interface VoiceSessionOptions {
   onTool?: (result: ToolResult) => void;
   now?: () => number;
   mode?: VoiceMode;
+  /** Structured page commands stay on this device instead of the chat model. */
+  classify?: (text: string) => boolean;
+  intercept?: (text: string) => Promise<LocalTurn | null>;
 }
 
 function isAbort(error: unknown): boolean {
@@ -168,6 +175,63 @@ export function createVoiceSession(options: VoiceSessionOptions): VoiceSession {
     }
   }
 
+  function cancelDeviceSpeech(): void {
+    if (typeof window !== 'undefined' && window.speechSynthesis) window.speechSynthesis.cancel();
+  }
+
+  async function speakCaptured(userText: string, answer: string): Promise<void> {
+    if (disposed || suppressMic) return;
+    if (!dispatch({ type: 'heard', text: userText })) return;
+    const id = ++turnId;
+    metricLogged = false;
+    replyDone = false;
+    turnStartedAt = now();
+    options.onUser?.(userText.trim());
+    if (id !== turnId || disposed) return;
+    dispatch({ type: 'assistant', text: answer });
+    const planner = createSpeechPlanner(options.language());
+    queueSpeech(planner.push(answer, true));
+    if (!planner.spoke) {
+      replyDone = true;
+      announce(voiceErrorMessage('reply-failed', options.language()));
+      return;
+    }
+    replyDone = true;
+    options.onAssistant?.({ text: answer, sources: [] });
+    maybeFinishSpeaking();
+  }
+
+  async function routeLocal(text: string): Promise<void> {
+    if (ownsTurns()) {
+      options.provider.suspend?.();
+      options.provider.bargeIn();
+    }
+    let decision: LocalTurn | null = null;
+    try {
+      decision = (await options.intercept?.(text)) ?? null;
+    } catch {
+      decision = null;
+    }
+    if (disposed || suppressMic) return;
+    if (!decision) {
+      void beginTurn(text);
+      return;
+    }
+    if (decision.action === 'stop') {
+      suppressMic = true;
+      turnId += 1;
+      turn?.abort();
+      turn = null;
+      replyDone = false;
+      options.provider.suspend?.();
+      cancelPlayback();
+      cancelDeviceSpeech();
+      dispatch({ type: 'stop' });
+      return;
+    }
+    await speakCaptured(text, decision.text);
+  }
+
   function onProviderEvent(event: ProviderEvent): void {
     if (disposed) return;
     switch (event.type) {
@@ -180,6 +244,10 @@ export function createVoiceSession(options: VoiceSessionOptions): VoiceSession {
         break;
       case 'final':
         if (suppressMic) return;
+        if (options.classify?.(event.text.trim())) {
+          void routeLocal(event.text);
+          return;
+        }
         if (ownsTurns()) {
           liveSaved = false;
           if (machine.phase === 'thinking' || machine.phase === 'speaking') {
@@ -293,6 +361,7 @@ export function createVoiceSession(options: VoiceSessionOptions): VoiceSession {
       replyDone = false;
       options.provider.suspend?.();
       cancelPlayback();
+      cancelDeviceSpeech();
       dispatch({ type: 'stop' });
     },
     dispose() {
@@ -306,6 +375,21 @@ export function createVoiceSession(options: VoiceSessionOptions): VoiceSession {
       options.provider.dispose?.();
       unsubscribe();
       listeners.clear();
+    },
+    say(text: string) {
+      if (disposed || !text.trim()) return;
+      if (machine.phase !== 'idle') {
+        turnId += 1;
+        turn?.abort();
+        turn = null;
+        options.provider.suspend?.();
+        cancelPlayback();
+        cancelDeviceSpeech();
+        dispatch({ type: 'stop' });
+      }
+      replyDone = true;
+      queueSpeech([text]);
+      maybeFinishSpeaking();
     },
     inject(text: string) {
       if (disposed || !text.trim()) return;

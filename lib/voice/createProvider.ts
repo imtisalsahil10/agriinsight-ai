@@ -88,7 +88,8 @@ export function createCompositeProvider(options: VoiceProviderOptions, factories
       fallback.setMode(mode);
     },
     speak(text, language) {
-      if (chosen === 'live') return;
+      // Local commands and errors speak here even after Live was chosen.
+      // Live's own audio is the player, not this method.
       fallback.speak(text, language);
     },
     subscribe(listener) {

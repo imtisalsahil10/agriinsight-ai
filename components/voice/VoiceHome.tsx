@@ -1,5 +1,7 @@
 import React from 'react';
 import { LayoutGrid, Sunrise } from 'lucide-react';
+import { usePageAssistant } from '../assistant/context';
+import { explainView } from '../../lib/assistant/copy';
 import { t } from '../../lib/i18n';
 import type { ToolResult } from '../../lib/tools/types';
 import type { Language, Message } from '../../types';
@@ -23,6 +25,16 @@ interface VoiceHomeProps {
 
 const VoiceHome: React.FC<VoiceHomeProps> = ({ language, messages, state, tools, onMic, onMode, onOpenDashboard, onBriefing }) => {
   const copy = voiceCopy(language);
+  const latest = [...messages].reverse().find((message) => message.role === 'model' && message.id !== 'welcome')?.content ?? '';
+  usePageAssistant({
+    view: 'voice',
+    language,
+    explain: () => explainView('voice', language),
+    read: () => latest.trim() ? latest : null,
+    apply: () => undefined,
+    missing: () => [],
+    run: async () => ({ ok: false, summary: explainView('voice', language) }),
+  });
   const status = statusLine(copy, state.phase, null);
   const micLabel = state.phase === 'listening'
     ? copy.micSend

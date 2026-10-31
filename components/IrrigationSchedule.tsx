@@ -1,94 +1,102 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Droplets, Loader2 } from 'lucide-react';
+import { usePageAssistant } from './assistant/context';
 import DemoBadge from './voice/DemoBadge';
+import { Field, PageFrame, Panel, PrimaryButton, Stat } from './ui/ui';
+import { TextInput } from './ui/ui';
+import { explainView } from '../lib/assistant/copy';
+import { textMissing } from '../lib/assistant/validate';
+import { rememberSummary } from '../lib/farm/store';
 import { generateIrrigationSchedule } from '../lib/tools/irrigation';
-import { IrrigationSchedule } from '../types';
+import type { IrrigationSchedule, Language } from '../types';
 
-interface IrrigationScheduleComponentProps {
-  language: 'en-US' | 'hi-IN';
-}
-
-const IrrigationScheduleView: React.FC<IrrigationScheduleComponentProps> = ({ language }) => {
-  const isHindi = language === 'hi-IN';
-  const [schedule, setSchedule] = useState<IrrigationSchedule | null>(null);
-  const [loading, setLoading] = useState(false);
+const IrrigationScheduleView: React.FC<{ language: Language }> = ({ language }) => {
+  const hi = language === 'hi-IN';
   const [cropType, setCropType] = useState('wheat');
+  const [schedule, setSchedule] = useState<IrrigationSchedule | null>(null);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const cropRef = useRef(cropType);
+  const summaryRef = useRef<string | null>(null);
+  const running = useRef(false);
+  cropRef.current = cropType;
 
-  const handleGenerate = () => {
+  const execute = async () => {
+    if (!cropRef.current.trim()) {
+      const message = hi ? 'फसल का नाम चाहिए।' : 'A crop name is required.';
+      setError(message);
+      return { ok: false, summary: message };
+    }
+    if (running.current) return { ok: false, summary: hi ? 'गणना पहले से चल रही है।' : 'That calculation is already running.' };
+    running.current = true;
     setLoading(true);
-    setSchedule(generateIrrigationSchedule(cropType).data);
-    setLoading(false);
+    setError('');
+    try {
+      const result = generateIrrigationSchedule(cropRef.current);
+      if (!result.ok || !result.data) return { ok: false, summary: result.summary };
+      setSchedule(result.data);
+      setSummary(result.summary);
+      summaryRef.current = result.summary;
+      rememberSummary(result.summary);
+      return { ok: true, summary: result.summary };
+    } finally {
+      running.current = false;
+      setLoading(false);
+    }
   };
 
+  usePageAssistant({
+    view: 'irrigation',
+    language,
+    explain: () => explainView('irrigation', language),
+    read: () => summaryRef.current,
+    apply: (patch) => {
+      if (!patch.crop) return;
+      cropRef.current = patch.crop;
+      setCropType(patch.crop);
+      setError('');
+    },
+    missing: () => textMissing(cropRef.current, hi ? 'फसल का नाम' : 'a crop name'),
+    run: execute,
+  });
+
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6 animate-in fade-in">
-      <div className="bg-gradient-to-r from-blue-600 to-blue-800 rounded-3xl p-8 text-white">
-        <div className="flex items-center mb-3">
-          <Droplets className="w-8 h-8 mr-3" />
-          <h1 className="text-3xl font-bold">{isHindi ? "सिंचाई अनुसूची" : "Irrigation Schedule"}</h1>
+    <PageFrame
+      icon={<Droplets className="h-5 w-5" />}
+      title={hi ? 'सिंचाई अनुसूची' : 'Irrigation'}
+      description={hi
+        ? 'फसल का नाम दें। यह डेमो फॉर्मूला है, मिट्टी की नमी का माप नहीं।'
+        : 'Name the crop. This is a demo formula, not a soil-moisture reading.'}
+    >
+      <Panel>
+        <Field id="irrigation-crop" label={hi ? 'फसल' : 'Crop'} hint={hi ? 'एक से ज़्यादा हों तो कॉमा से अलग करें' : 'Separate multiple crops with commas'} error={error || undefined}>
+          <TextInput id="irrigation-crop" value={cropType} aria-describedby="irrigation-crop-hint" invalid={Boolean(error)} onChange={(event) => { cropRef.current = event.target.value; setCropType(event.target.value); }} placeholder={hi ? 'गेहूँ, चावल' : 'wheat, rice'} />
+        </Field>
+        <div className="mt-4">
+          <PrimaryButton onClick={() => { void execute(); }} disabled={loading}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {hi ? 'सिंचाई की गणना करें' : 'Calculate irrigation'}
+          </PrimaryButton>
         </div>
-        <p className="text-blue-100">{isHindi ? "अपनी फसल के लिए बुद्धिमान सिंचाई योजना प्राप्त करें" : "Get an intelligent irrigation plan based on your crop and weather"}</p>
-      </div>
-
-      <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 space-y-4 transition-colors">
-        <div>
-          <label className="block text-sm font-medium mb-2">{isHindi ? "फसल का प्रकार (कॉमा से अलग करें)" : "Crop Type (comma-separated for multiple)"}</label>
-          <input
-            value={cropType}
-            onChange={(e) => setCropType(e.target.value)}
-            placeholder={isHindi ? "उदाहरण: गेहूँ, चावल" : "e.g., wheat, rice"}
-            className="w-full px-4 py-2 border rounded-lg dark:bg-slate-700 dark:border-slate-600"
-          />
-        </div>
-
-        <button
-          onClick={handleGenerate}
-          disabled={loading}
-          className="w-full px-6 py-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:bg-gray-400 font-medium"
-        >
-          {loading ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
-              {isHindi ? "योजना बनाई जा रही है..." : "Generating..."}
-            </>
-          ) : (
-            isHindi ? "योजना बनाएं" : "Generate Schedule"
-          )}
-        </button>
-      </div>
-
-      {schedule && (
+      </Panel>
+      {schedule && summary && (
         <div className="space-y-4">
           <DemoBadge language={language} />
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-blue-50 dark:bg-blue-900/30 p-4 rounded-xl">
-              <p className="text-xs text-gray-600 dark:text-gray-400">{isHindi ? "अगली सिंचाई" : "Next Irrigation"}</p>
-              <p className="text-xl font-bold text-blue-600">{schedule.nextIrrigationDate}</p>
-            </div>
-            <div className="bg-cyan-50 dark:bg-cyan-900/30 p-4 rounded-xl">
-              <p className="text-xs text-gray-600 dark:text-gray-400">{isHindi ? "जल की मात्रा" : "Water Amount"}</p>
-              <p className="text-xl font-bold text-cyan-600">{schedule.waterAmount}</p>
-            </div>
-            <div className="bg-teal-50 dark:bg-teal-900/30 p-4 rounded-xl">
-              <p className="text-xs text-gray-600 dark:text-gray-400">{isHindi ? "आवृत्ति" : "Frequency"}</p>
-              <p className="text-xl font-bold text-teal-600">{schedule.frequency}</p>
-            </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <Stat label={hi ? 'अगली सिंचाई' : 'Next irrigation'} value={schedule.nextIrrigationDate} />
+            <Stat label={hi ? 'पानी' : 'Water'} value={schedule.waterAmount} />
+            <Stat label={hi ? 'आवृत्ति' : 'Frequency'} value={schedule.frequency} />
           </div>
-
-          <div className="bg-white dark:bg-slate-800 p-6 rounded-xl transition-colors">
-            <h3 className="font-bold mb-4">{isHindi ? "जल बचत सुझाव" : "Water Saving Tips"}</h3>
-            <div className="space-y-3">
-              {schedule.savingTips.map((tip, i) => (
-                <div key={i} className="flex items-start p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-                  <span className="text-blue-600 mr-3 font-bold">💧</span>
-                  <p className="text-sm">{tip}</p>
-                </div>
-              ))}
-            </div>
-          </div>
+          <Panel>
+            <h2 className="text-sm font-semibold">{hi ? 'पानी बचाने के सुझाव' : 'Water-saving tips'}</h2>
+            <ul className="mt-2 space-y-2 text-sm text-slate-700 dark:text-slate-200">
+              {schedule.savingTips.map((tip) => <li key={tip}>{tip}</li>)}
+            </ul>
+          </Panel>
         </div>
       )}
-    </div>
+    </PageFrame>
   );
 };
 

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Languages, Shield, Info, Bell, Moon, ChevronRight, X } from 'lucide-react';
+import { usePageAssistant } from './assistant/context';
+import { explainView } from '../lib/assistant/copy';
 import type { FieldPrefs } from '../lib/field/prefs';
 import { t } from '../lib/i18n';
 
@@ -25,6 +27,18 @@ const Settings: React.FC<SettingsProps> = ({
   onField,
 }) => {
   const isHindi = language === 'hi-IN';
+  usePageAssistant({
+    view: 'settings',
+    language,
+    explain: () => explainView('settings', language),
+    read: () => (isHindi ? 'सेटिंग्स में भाषा, डार्क मोड और खेत की पसंद है।' : 'Settings holds language, dark mode, and field preferences.'),
+    apply: () => undefined,
+    missing: () => [],
+    run: async () => ({
+      ok: false,
+      summary: explainView('settings', language),
+    }),
+  });
   const [showPrivacy, setShowPrivacy] = useState(false);
   const privacyTriggerRef = useRef<HTMLButtonElement>(null);
   const modalCloseRef = useRef<HTMLButtonElement>(null);

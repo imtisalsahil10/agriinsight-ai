@@ -1,206 +1,187 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { QUICK_ACTIONS } from '../constants';
-import { Sun, Droplets, Wind, ArrowRight, Activity, MapPin, Loader2, Cloud, CloudRain, Snowflake, RefreshCw } from 'lucide-react';
+import { ArrowRight, Cloud, CloudRain, Droplets, MapPin, RefreshCw, Snowflake, Sun, Wind } from 'lucide-react';
+import { usePageAssistant } from './assistant/context';
+import { Callout, PageFrame, Panel, SecondaryButton } from './ui/ui';
+import { explainView } from '../lib/assistant/copy';
+import { loadFarm } from '../lib/farm/store';
 import { getWeatherAlert } from '../lib/tools/weather';
-import { WeatherData, CachedWeatherData } from '../types';
+import { WeatherData, CachedWeatherData, type Language } from '../types';
 
 interface DashboardProps {
   onQuickAction: (prompt: string) => void;
   onNavigate?: (view: string) => void;
-  language: 'en-US' | 'hi-IN';
+  onAsk?: (text: string) => void;
+  language: Language;
 }
 
 const WEATHER_CACHE_KEY = 'agriinsight_weather_cache';
-const CACHE_DURATION = 60 * 60 * 1000; // 1 hour in milliseconds
+const CACHE_DURATION = 60 * 60 * 1000;
 
-const Dashboard: React.FC<DashboardProps> = ({ onQuickAction, onNavigate, language }) => {
-  const isHindi = language === 'hi-IN';
+const Dashboard: React.FC<DashboardProps> = ({ onQuickAction, onNavigate, onAsk, language }) => {
+  const hi = language === 'hi-IN';
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [loadingWeather, setLoadingWeather] = useState(false);
   const [locationError, setLocationError] = useState<string | null>(null);
+  const weatherRef = useRef<WeatherData | null>(null);
+  const summaryRef = useRef<string | null>(null);
+  const running = useRef(false);
+  const farm = loadFarm();
 
-  // Load cached weather data on mount
   useEffect(() => {
     const cachedData = localStorage.getItem(WEATHER_CACHE_KEY);
-    if (cachedData) {
-      try {
-        const parsed: CachedWeatherData = JSON.parse(cachedData);
-        const now = Date.now();
-        
-        // Check if cache is still valid (less than 1 hour old)
-        if (now - parsed.timestamp < CACHE_DURATION) {
-          setWeather(parsed.data);
-        } else {
-          // Cache expired, remove it
-          localStorage.removeItem(WEATHER_CACHE_KEY);
-        }
-      } catch (err) {
-        console.error("Failed to parse cached weather", err);
+    if (!cachedData) return;
+    try {
+      const parsed: CachedWeatherData = JSON.parse(cachedData);
+      if (Date.now() - parsed.timestamp < CACHE_DURATION) {
+        weatherRef.current = parsed.data;
+        setWeather(parsed.data);
+      } else {
         localStorage.removeItem(WEATHER_CACHE_KEY);
       }
+    } catch {
+      localStorage.removeItem(WEATHER_CACHE_KEY);
     }
   }, []);
 
-  const fetchWeatherData = () => {
-    // Check if geolocation is supported
+  const fetchWeatherData = async (): Promise<{ ok: boolean; summary: string }> => {
     if (!navigator.geolocation) {
-      setLocationError(isHindi ? "स्थान सेवा समर्थित नहीं" : "Geolocation not supported");
-      return;
+      const summary = hi ? 'स्थान सेवा समर्थित नहीं।' : 'Geolocation is not supported.';
+      setLocationError(summary);
+      return { ok: false, summary };
     }
-
+    if (running.current) return { ok: false, summary: hi ? 'मौसम पहले से लोड हो रहा है।' : 'Weather is already loading.' };
+    running.current = true;
     setLoadingWeather(true);
     setLocationError(null);
-
-    // Get position with timeout
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        try {
-          const result = await getWeatherAlert(position.coords.latitude, position.coords.longitude);
-          if (!result.ok) throw new Error(result.summary);
-          const data = result.data.weather;
-          setWeather(data);
-          
-          // Cache the weather data with timestamp and location
-          const cacheData: CachedWeatherData = {
-            data,
-            timestamp: Date.now(),
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude
-          };
-          localStorage.setItem(WEATHER_CACHE_KEY, JSON.stringify(cacheData));
-        } catch (err) {
-          console.error("Failed to fetch weather", err);
-          setLocationError(isHindi ? "मौसम अनुपलब्ध" : "Weather unavailable");
-        } finally {
-          setLoadingWeather(false);
-        }
-      },
-      (error) => {
-        console.error("Geolocation error", error);
-        // Provide specific error messages
-        let errorMsg = "Location access denied";
-        if (error.code === 1) {
-          errorMsg = isHindi ? "स्थान अनुमति अस्वीकृत" : "Location permission denied";
-        } else if (error.code === 2) {
-          errorMsg = isHindi ? "स्थान अनुपलब्ध" : "Location unavailable";
-        } else if (error.code === 3) {
-          errorMsg = isHindi ? "स्थान अनुरोध समय समाप्त" : "Location request timed out";
-        }
-        setLocationError(errorMsg);
-        setLoadingWeather(false);
-      },
-      {
-        timeout: 10000,
-        enableHighAccuracy: false
+    try {
+      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 10000, enableHighAccuracy: false });
+      });
+      const result = await getWeatherAlert(position.coords.latitude, position.coords.longitude);
+      if (!result.ok) {
+        setLocationError(result.summary);
+        return { ok: false, summary: result.summary };
       }
-    );
+      const data = result.data.weather;
+      weatherRef.current = data;
+      setWeather(data);
+      summaryRef.current = result.summary;
+      const cacheData: CachedWeatherData = {
+        data,
+        timestamp: Date.now(),
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      };
+      localStorage.setItem(WEATHER_CACHE_KEY, JSON.stringify(cacheData));
+      return { ok: true, summary: result.summary };
+    } catch (error) {
+      const code = typeof error === 'object' && error && 'code' in error ? Number((error as GeolocationPositionError).code) : 0;
+      const summary = code === 1
+        ? (hi ? 'स्थान की अनुमति नहीं मिली।' : 'Location permission was denied.')
+        : code === 3
+          ? (hi ? 'स्थान अनुरोध का समय समाप्त।' : 'The location request timed out.')
+          : (hi ? 'मौसम अभी उपलब्ध नहीं।' : 'Weather is unavailable right now.');
+      setLocationError(summary);
+      return { ok: false, summary };
+    } finally {
+      running.current = false;
+      setLoadingWeather(false);
+    }
   };
 
-  // Helper to choose weather icon
-  const getWeatherIcon = (condition: string) => {
-    const c = condition.toLowerCase();
-    if (c.includes('rain') || c.includes('drizzle')) return <CloudRain className="w-5 h-5 text-blue-500 mr-2" />;
-    if (c.includes('cloud')) return <Cloud className="w-5 h-5 text-gray-500 mr-2" />;
-    if (c.includes('snow')) return <Snowflake className="w-5 h-5 text-cyan-500 mr-2" />;
-    return <Sun className="w-5 h-5 text-orange-500 mr-2" />;
+  usePageAssistant({
+    view: 'dashboard',
+    language,
+    explain: () => explainView('dashboard', language),
+    read: () => summaryRef.current ?? (weatherRef.current ? `${weatherRef.current.condition}, ${weatherRef.current.temp}°C` : farm.lastSummary || null),
+    apply: () => undefined,
+    missing: () => [],
+    run: fetchWeatherData,
+  });
+
+  const icon = (condition: string) => {
+    const name = condition.toLowerCase();
+    if (name.includes('rain') || name.includes('drizzle')) return <CloudRain className="h-5 w-5 text-sky-600" />;
+    if (name.includes('cloud')) return <Cloud className="h-5 w-5 text-slate-500" />;
+    if (name.includes('snow')) return <Snowflake className="h-5 w-5 text-sky-500" />;
+    return <Sun className="h-5 w-5 text-amber-500" />;
   };
+
+  const suggestions = hi
+    ? ['मिट्टी विश्लेषण खोलो', 'गेहूं का बाजार भाव दिखाओ', 'इस पेज को समझाओ']
+    : ['Open soil analysis', 'Show me the market price for wheat', 'Explain how this feature works'];
 
   return (
-    <div className="p-4 md:p-8 max-w-6xl mx-auto w-full space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      
-      {/* Hero Section */}
-      <div className="bg-gradient-to-r from-agri-600 to-agri-800 rounded-3xl p-6 md:p-10 text-white shadow-xl relative overflow-hidden">
-        {/* Decorative Circles */}
-        <div className="absolute top-0 right-0 -mt-10 -mr-10 w-40 h-40 bg-white opacity-10 rounded-full"></div>
-        <div className="absolute bottom-0 left-0 -mb-10 -ml-10 w-32 h-32 bg-white opacity-10 rounded-full"></div>
-
-        <div className="relative z-10">
-          <h1 className="text-3xl md:text-4xl font-bold mb-3">
-            {isHindi ? "नमस्ते, किसान!" : "Hello, Farmer!"}
-          </h1>
-          <p className="text-agri-100 text-lg max-w-2xl leading-relaxed">
-            {isHindi 
-              ? "मैं आपकी फसल की उपज बढ़ाने में कैसे मदद कर सकता हूँ? नीचे दिए गए विकल्पों में से चुनें या मुझसे पूछें।"
-              : "How can I help improve your crop yield today? Select an option below or ask me anything about your farm."}
-          </p>
-        </div>
-      </div>
-
-      {/* Weather Summary Card */}
-      <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 border border-gray-100 dark:border-slate-700 shadow-sm min-h-[140px] transition-colors">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold text-gray-800 dark:text-white flex items-center">
-            {loadingWeather ? (
-               <Loader2 className="w-5 h-5 text-orange-500 mr-2 animate-spin" />
-            ) : weather ? (
-               getWeatherIcon(weather.condition)
-            ) : (
-               <Sun className="w-5 h-5 text-orange-500 mr-2" />
-            )}
-            {isHindi ? "आज का मौसम" : "Today's Weather"}
-            <span className="ml-2 text-xs font-normal text-slate-400">Open-Meteo</span>
-          </h2>
-          <div className="flex items-center gap-2">
-            {weather && (
-              <span className="text-xs text-gray-400 dark:text-slate-400 flex items-center">
-                <MapPin className="w-3 h-3 mr-1" />
-                {weather.location}
-              </span>
-            )}
-            <button
-              onClick={fetchWeatherData}
-              disabled={loadingWeather}
-              className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-white bg-agri-600 hover:bg-agri-700 disabled:bg-gray-400 rounded-lg transition-colors"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loadingWeather ? 'animate-spin' : ''}`} />
-              {loadingWeather ? (isHindi ? 'लोड हो रहा...' : 'Loading...') : (isHindi ? 'अपडेट करें' : 'Fetch')}
-            </button>
+    <PageFrame
+      icon={<Sun className="h-5 w-5" />}
+      title={hi ? 'डैशबोर्ड' : 'Dashboard'}
+      description={hi
+        ? 'उपकरण, सेव किए नोट, और मौसम जब आप उसे लाते हैं।'
+        : 'Tools, saved notes, and weather when you fetch it.'}
+    >
+      <Panel>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900 dark:text-white">{hi ? 'आज का मौसम' : "Today's weather"}</h2>
+            <p className="text-xs text-slate-500">Open-Meteo</p>
           </div>
+          <SecondaryButton onClick={() => { void fetchWeatherData(); }} disabled={loadingWeather}>
+            <RefreshCw className={`h-4 w-4 ${loadingWeather ? 'animate-spin' : ''}`} />
+            {loadingWeather ? (hi ? 'लोड हो रहा है' : 'Loading') : (hi ? 'मौसम लाएँ' : 'Fetch weather')}
+          </SecondaryButton>
         </div>
-
-        {loadingWeather ? (
-          <div className="flex justify-center items-center h-20 text-gray-400">
-            <Loader2 className="w-6 h-6 animate-spin mr-2" />
-            <span>{isHindi ? 'स्थानीय पूर्वानुमान लोड हो रहा है...' : 'Loading local forecast...'}</span>
-          </div>
-        ) : weather ? (
-          <div className="grid grid-cols-3 gap-4">
-            <div className="bg-blue-50 dark:bg-slate-700 p-4 rounded-xl flex flex-col items-center justify-center text-center">
-              <span className="text-2xl font-bold text-blue-700 dark:text-blue-300">{weather.temp}°C</span>
-              <span className="text-xs text-blue-500 dark:text-blue-300 font-medium whitespace-nowrap">{weather.condition}</span>
+        {weather ? (
+          <div className="mt-4 grid grid-cols-3 gap-2">
+            <div className="rounded-xl bg-slate-50 px-3 py-3 dark:bg-slate-900">
+              <div className="flex items-center gap-2 text-sm text-slate-500">{icon(weather.condition)}{weather.condition}</div>
+              <p className="mt-1 text-2xl font-semibold">{weather.temp}°C</p>
             </div>
-            <div className="bg-indigo-50 dark:bg-slate-700 p-4 rounded-xl flex flex-col items-center justify-center text-center">
-              <Droplets className="w-6 h-6 text-indigo-500 dark:text-indigo-400 mb-1" />
-              <span className="text-sm font-bold text-indigo-700 dark:text-indigo-300">{weather.humidity}%</span>
-              <span className="text-xs text-indigo-500 dark:text-indigo-300">Humidity</span>
+            <div className="rounded-xl bg-slate-50 px-3 py-3 dark:bg-slate-900">
+              <Droplets className="h-4 w-4 text-sky-600" />
+              <p className="mt-1 text-lg font-semibold">{weather.humidity}%</p>
+              <p className="text-xs text-slate-500">{hi ? 'नमी' : 'Humidity'}</p>
             </div>
-            <div className="bg-slate-50 dark:bg-slate-700 p-4 rounded-xl flex flex-col items-center justify-center text-center">
-              <Wind className="w-6 h-6 text-slate-500 dark:text-slate-400 mb-1" />
-              <span className="text-sm font-bold text-slate-700 dark:text-slate-300">{weather.wind} km/h</span>
-              <span className="text-xs text-slate-500 dark:text-slate-400">Wind</span>
+            <div className="rounded-xl bg-slate-50 px-3 py-3 dark:bg-slate-900">
+              <Wind className="h-4 w-4 text-slate-500" />
+              <p className="mt-1 text-lg font-semibold">{weather.wind}</p>
+              <p className="text-xs text-slate-500">km/h</p>
             </div>
           </div>
         ) : (
-          <div className="flex flex-col justify-center items-center h-20 text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-slate-700/50 rounded-xl">
-            {locationError ? (
-              <span className="text-red-500 dark:text-red-400">{locationError}</span>
-            ) : (
-              <span className="text-sm">{isHindi ? 'मौसम डेटा प्राप्त करने के लिए "अपडेट करें" पर क्लिक करें' : 'Click "Fetch" to get weather data'}</span>
-            )}
-          </div>
+          <p className="mt-4 text-sm text-slate-500">{locationError || (hi ? 'मौसम लाने के लिए बटन दबाएँ।' : 'Fetch weather to see a live reading.')}</p>
         )}
-      </div>
+        {weather && (
+          <p className="mt-3 flex items-center text-xs text-slate-500"><MapPin className="mr-1 h-3 w-3" />{weather.location}</p>
+        )}
+      </Panel>
 
-      {/* Quick Actions Grid */}
+      {(farm.location || farm.crops.length > 0 || farm.lastSummary || farm.notes.length > 0) && (
+        <Panel>
+          <h2 className="text-base font-semibold">{hi ? 'खेत' : 'Farm'}</h2>
+          <div className="mt-2 space-y-1 text-sm text-slate-600 dark:text-slate-300">
+            {farm.location && <p>{farm.location}</p>}
+            {farm.crops.length > 0 && <p>{farm.crops.join(', ')}</p>}
+            {typeof farm.areaHectares === 'number' && <p>{farm.areaHectares} ha</p>}
+          </div>
+          {farm.lastSummary && <p className="mt-3 text-sm text-slate-700 dark:text-slate-200">{farm.lastSummary}</p>}
+          {farm.notes.length > 0 && (
+            <ul className="mt-3 space-y-2">
+              {farm.notes.slice(-3).reverse().map((note) => (
+                <li key={note.id} className="rounded-lg bg-slate-50 px-3 py-2 text-sm dark:bg-slate-900">{note.text}</li>
+              ))}
+            </ul>
+          )}
+        </Panel>
+      )}
+
       <div>
-        <h2 className="text-lg font-bold text-gray-800 dark:text-white mb-4 flex items-center">
-          <Activity className="w-5 h-5 text-agri-600 mr-2" />
-          {isHindi ? "त्वरित कार्रवाई" : "Quick Actions"}
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">{hi ? 'उपकरण' : 'Tools'}</h2>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {QUICK_ACTIONS.map((action) => (
             <button
               key={action.id}
+              type="button"
               onClick={() => {
                 if (onNavigate && ['disease', 'soil', 'irrigation', 'market', 'alerts', 'calendar', 'fertilizer', 'locations', 'yield'].includes(action.id)) {
                   onNavigate(action.id);
@@ -208,28 +189,30 @@ const Dashboard: React.FC<DashboardProps> = ({ onQuickAction, onNavigate, langua
                   onQuickAction(action.prompt);
                 }
               }}
-              className="group flex flex-col items-start p-5 bg-white dark:bg-slate-800 border border-gray-100 dark:border-slate-700 rounded-2xl shadow-sm hover:shadow-md hover:border-agri-200 dark:hover:border-agri-600 transition-all text-left"
+              className="surface flex items-start gap-3 p-4 text-left transition-shadow hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-agri-700"
             >
-              <div className={`p-3 rounded-xl mb-3 ${action.color.replace('text-', 'bg-').replace('100', '50')} dark:bg-opacity-20`}>
-                <div className={`${action.color} bg-transparent dark:text-opacity-90`}>
-                  {action.icon}
-                </div>
-              </div>
-              <h3 className="font-bold text-gray-800 dark:text-gray-100 group-hover:text-agri-700 dark:group-hover:text-agri-400 transition-colors">
-                {action.label}
-              </h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1 line-clamp-2">
-                {isHindi ? "क्लिक करें जानकारी के लिए..." : action.prompt}
-              </p>
-              <div className="mt-auto pt-4 flex items-center text-xs font-bold text-agri-600 dark:text-agri-400 opacity-0 group-hover:opacity-100 transition-opacity">
-                {isHindi ? "अभी पूछें" : "Ask Now"} <ArrowRight className="w-3 h-3 ml-1" />
-              </div>
+              <span className="mt-0.5 text-agri-800 dark:text-agri-200">{action.icon}</span>
+              <span className="min-w-0">
+                <span className="block font-semibold text-slate-900 dark:text-white">{action.label}</span>
+                <span className="mt-1 flex items-center text-xs font-medium text-agri-800 dark:text-agri-200">{hi ? 'खोलें' : 'Open'} <ArrowRight className="ml-1 h-3 w-3" /></span>
+              </span>
             </button>
           ))}
         </div>
       </div>
 
-    </div>
+      <Panel>
+        <h2 className="text-sm font-semibold">{hi ? 'सहायक से कहें' : 'Ask the assistant'}</h2>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {suggestions.map((suggestion) => (
+            <button key={suggestion} type="button" className="btn-secondary min-h-9 px-3 text-sm" onClick={() => onAsk?.(suggestion)}>
+              {suggestion}
+            </button>
+          ))}
+        </div>
+      </Panel>
+      {locationError && weather && <Callout tone="warning">{locationError}</Callout>}
+    </PageFrame>
   );
 };
 
