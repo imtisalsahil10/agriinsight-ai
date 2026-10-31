@@ -8,6 +8,7 @@ export interface VoiceCopy {
   title: string;
   idle: string;
   listening: string;
+  listeningHands: string;
   thinking: string;
   speaking: string;
   connecting: string;
@@ -27,6 +28,7 @@ export function voiceCopy(language: Language): VoiceCopy {
     title: t(language, 'voice_title'),
     idle: t(language, 'voice_idle'),
     listening: t(language, 'voice_listening'),
+    listeningHands: t(language, 'voice_listening_hands'),
     thinking: t(language, 'voice_thinking'),
     speaking: t(language, 'voice_speaking'),
     connecting: t(language, 'voice_connecting'),
@@ -47,11 +49,12 @@ export function statusLine(
   phase: VoicePhase,
   error: string | null,
   connection: VoiceConnection = 'open',
+  mode: VoiceMode = 'push-to-talk',
 ): string {
   if (connection === 'connecting') return copy.connecting;
   if (connection === 'reconnecting') return copy.reconnecting;
   if (error && phase !== 'listening') return error;
-  if (phase === 'listening') return copy.listening;
+  if (phase === 'listening') return mode === 'hands-free' ? copy.listeningHands : copy.listening;
   if (phase === 'thinking') return copy.thinking;
   if (phase === 'speaking') return copy.speaking;
   return copy.idle;

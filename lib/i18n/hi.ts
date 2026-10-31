@@ -31,6 +31,7 @@ export const hi: Record<MessageKey, string> = {
   voice_title: 'बात करें',
   voice_idle: 'माइक दबाएँ और बोलें',
   voice_listening: 'सुन रहा हूँ… भेजने के लिए फिर दबाएँ',
+  voice_listening_hands: 'सुन रहा हूँ… रुकें या भेजने के लिए दबाएँ',
   voice_thinking: 'सोच रहा हूँ…',
   voice_speaking: 'बोल रहा हूँ… बीच में बोलने के लिए माइक दबाएँ',
   voice_connecting: 'कनेक्ट हो रहा है…',

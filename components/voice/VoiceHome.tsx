@@ -37,7 +37,7 @@ const VoiceHome: React.FC<VoiceHomeProps> = ({ language, messages, state, tools,
     missing: () => [],
     run: async () => ({ ok: false, summary: explainView('voice', language) }),
   });
-  const status = statusLine(copy, state.phase, null, state.connection);
+  const status = statusLine(copy, state.phase, null, state.connection, state.mode);
   const micLabel = state.phase === 'listening'
     ? copy.micSend
     : state.phase === 'thinking' || state.phase === 'speaking'

@@ -12,6 +12,7 @@ import {
   PcmPlayer,
 } from './pcmPlayer';
 import { MAX_RECONNECTS, reconnectDelayMs, socketClosePlan } from './reconnect';
+import { mergeTranscript } from './transcript';
 import type { ProviderEvent, VoiceMode, VoiceProvider } from './types';
 
 /**
@@ -146,6 +147,8 @@ export function createGeminiLiveProvider(options: GeminiLiveOptions): VoiceProvi
   let toolsInFlight = 0;
   let resumeHandle = '';
   let lastLevelAt = 0;
+  let awaitingUser = false;
+  let uplinkOpenAt = 0;
 
   function emit(event: ProviderEvent): void {
     for (const listener of listeners) listener(event);
@@ -168,24 +171,29 @@ Reply in Hindi (Devanagari) when the farmer speaks Hindi. If they mix Hindi and 
 Use tools for weather, prices, irrigation, soil, yield, disease, notes, and reminders. Never invent a live market price. If a tool result is demo data, say it is demo data.${place}${crops}${memory}`;
   }
 
-  function resetTurn(): void {
-    inputText = '';
-    outputText = '';
-    finalSent = false;
-    turnDone = false;
-    playing = false;
+  function nowMs(): number {
+    return typeof performance === 'undefined' ? Date.now() : performance.now();
+  }
+
+  function holdUplink(ms = 400): void {
+    uplinkOpenAt = nowMs() + ms;
   }
 
   function commitInput(): void {
     if (finalSent || quiet) return;
+    const text = inputText.trim();
+    if (!text) return;
     finalSent = true;
-    emit({ type: 'final', text: inputText.trim() || '…' });
+    emit({ type: 'final', text });
   }
 
   function finishIfIdle(): void {
-    if (quiet || !turnDone || playing || toolsInFlight > 0) return;
+    if (quiet || awaitingUser || !turnDone || playing || toolsInFlight > 0) return;
+    awaitingUser = true;
     emit({ type: 'speech-end' });
-    resetTurn();
+    holdUplink();
+    turnDone = false;
+    playing = false;
   }
 
   function ensurePlayer(): PcmPlayer {
@@ -193,6 +201,7 @@ Use tools for weather, prices, irrigation, soil, yield, disease, notes, and remi
       player = new PcmPlayer({
         onIdle: () => {
           playing = false;
+          holdUplink();
           finishIfIdle();
         },
       });
@@ -225,6 +234,7 @@ Use tools for weather, prices, irrigation, soil, yield, disease, notes, and remi
   function onCaptureFrame(frame: CaptureFrame): void {
     emitLevel(frame.level);
     if (!capturing || !socket || quiet) return;
+    if (nowMs() < uplinkOpenAt) return;
     if (playing) {
       if (frame.level < BARGE_LEVEL) return;
       haltPlayback();
@@ -256,17 +266,24 @@ Use tools for weather, prices, irrigation, soil, yield, disease, notes, and remi
         playing = false;
         ignoreAudio = true;
       }
-      inputText = mergeText(inputText, content.inputTranscription.text);
+      if (awaitingUser) {
+        awaitingUser = false;
+        inputText = '';
+        outputText = '';
+        finalSent = false;
+        turnDone = false;
+      }
+      inputText = mergeTranscript(inputText, content.inputTranscription.text);
       if (!finalSent) emit({ type: 'partial', text: inputText });
     }
-    if (content?.outputTranscription?.text) {
+    if (!awaitingUser && content?.outputTranscription?.text) {
       if (primed) allowPlayback();
       commitInput();
-      outputText = mergeText(outputText, content.outputTranscription.text);
+      outputText = mergeTranscript(outputText, content.outputTranscription.text);
       emit({ type: 'assistant', text: outputText });
     }
     const audio = message.data;
-    if (audio && !skipAudio) playAudio(audio);
+    if (audio && !skipAudio && !awaitingUser) playAudio(audio);
     if (message.toolCall?.functionCalls?.length) {
       toolsInFlight += 1;
       const calls = message.toolCall.functionCalls;
@@ -531,7 +548,6 @@ Use tools for weather, prices, irrigation, soil, yield, disease, notes, and remi
       }
     },
     stop() {
-      if (mode === 'hands-free') return;
       capturing = false;
       try {
         socket?.sendRealtimeInput({ audioStreamEnd: true });
@@ -582,13 +598,6 @@ Use tools for weather, prices, irrigation, soil, yield, disease, notes, and remi
   };
 
   return provider;
-}
-
-function mergeText(current: string, piece: string): string {
-  if (!piece) return current;
-  if (!current || piece.startsWith(current)) return piece;
-  if (current.endsWith(piece)) return current;
-  return current + piece;
 }
 
 function rms(samples: Float32Array): number {

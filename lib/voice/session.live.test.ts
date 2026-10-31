@@ -12,9 +12,21 @@ class LiveFake implements VoiceProvider {
     return Promise.resolve();
   }
 
-  stop(): void { return undefined; }
+  stops = 0;
+  mode: VoiceMode = 'push-to-talk';
+  suspended = false;
+
+  stop(): void {
+    this.stops += 1;
+  }
+
+  suspend(): void {
+    this.suspended = true;
+  }
   bargeIn(): void { return undefined; }
-  setMode(_mode: VoiceMode): void { return undefined; }
+  setMode(mode: VoiceMode): void {
+    this.mode = mode;
+  }
   speak(): void { return undefined; }
 
   emit(event: ProviderEvent): void {
@@ -47,6 +59,50 @@ describe('a provider that owns the turn', () => {
     await new Promise((resolve) => { setTimeout(resolve, 0); });
     expect(reply).not.toHaveBeenCalled();
     expect(heard).toEqual(['How often should I water wheat?']);
+    expect(session.getState().phase).toBe('idle');
+    session.dispose();
+  });
+
+  it('does not save the same spoken answer twice', async () => {
+    const provider = new LiveFake();
+    const saved: string[] = [];
+    const session = createVoiceSession({
+      provider,
+      language: () => 'hi-IN',
+      history: () => [],
+      reply: vi.fn(),
+      onAssistant: (result) => { saved.push(result.text); },
+      mode: 'hands-free',
+    });
+    await session.start();
+    const answer = 'ज्वार एक प्रमुख अनाज है, जिसे कई इलाकों में सोरघम भी कहा जाता है। यह ग्लूटेन-फ्री होता है।';
+    provider.emit({ type: 'final', text: 'ज्वार क्या है' });
+    provider.emit({ type: 'assistant', text: answer });
+    provider.emit({ type: 'speech-start' });
+    provider.emit({ type: 'speech-end' });
+    provider.emit({ type: 'final', text: 'गेहूं के बारे में बताओ' });
+    provider.emit({ type: 'assistant', text: `${answer} इसका इस्तेमाल रोटी बनाने में किया जाता है।` });
+    provider.emit({ type: 'speech-start' });
+    provider.emit({ type: 'speech-end' });
+    expect(saved).toEqual([answer]);
+    expect(session.getState().assistantText).toBe('');
+    session.dispose();
+  });
+
+  it('leaves hands-free and returns to idle when push to talk is selected', async () => {
+    const provider = new LiveFake();
+    const session = createVoiceSession({
+      provider,
+      language: () => 'en-US',
+      history: () => [],
+      reply: vi.fn(),
+      mode: 'hands-free',
+    });
+    await session.start();
+    session.setMode('push-to-talk');
+    expect(provider.mode).toBe('push-to-talk');
+    expect(provider.suspended).toBe(true);
+    expect(session.getState().mode).toBe('push-to-talk');
     expect(session.getState().phase).toBe('idle');
     session.dispose();
   });

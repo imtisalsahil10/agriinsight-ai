@@ -149,7 +149,7 @@ export function transition(state: SessionState, event: MachineEvent): Transition
           ...state,
           phase: 'idle',
           announcingError: false,
-          assistantText: state.announcingError ? '' : state.assistantText,
+          assistantText: '',
           partialTranscript: '',
           audioLevel: 0,
         });
@@ -158,6 +158,7 @@ export function transition(state: SessionState, event: MachineEvent): Transition
         ...state,
         phase: 'listening',
         announcingError: false,
+        assistantText: '',
         partialTranscript: '',
         finalTranscript: '',
         error: null,

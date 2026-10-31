@@ -29,6 +29,7 @@ export const en = {
   voice_title: 'Talk',
   voice_idle: 'Tap the mic and speak',
   voice_listening: 'Listening… tap again to send',
+  voice_listening_hands: 'Listening… pause or tap to send',
   voice_thinking: 'Thinking…',
   voice_speaking: 'Speaking… tap the mic to interrupt',
   voice_connecting: 'Connecting…',

@@ -2,6 +2,7 @@ import type { Language } from '../../types';
 import { failureCode, voiceErrorMessage } from './errors';
 import { logVoiceMetric } from './metrics';
 import { initialState, transition } from './sessionMachine';
+import { isRepeat } from './transcript';
 import { createSpeechPlanner } from './speechText';
 import type { ToolResult } from '../tools/types';
 import type { ProviderEvent, ReplyRequest, ReplyResult, SessionState, VoiceMode, VoiceProvider, VoiceSession } from './types';
@@ -47,6 +48,7 @@ export function createVoiceSession(options: VoiceSessionOptions): VoiceSession {
   let starting = false;
   let lastFinalText = '';
   let lastFinalAt = 0;
+  let lastAssistant = '';
   const listeners = new Set<(state: SessionState) => void>();
 
   function ownsTurns(): boolean {
@@ -296,9 +298,13 @@ export function createVoiceSession(options: VoiceSessionOptions): VoiceSession {
         break;
       case 'speech-end': {
         if (ownsTurns()) {
-          if (!liveSaved && machine.assistantText.trim()) {
+          const text = machine.assistantText.trim();
+          if (!liveSaved && text && !isRepeat(lastAssistant, text)) {
             liveSaved = true;
-            options.onAssistant?.({ text: machine.assistantText, sources: [] });
+            lastAssistant = text;
+            options.onAssistant?.({ text, sources: [] });
+          } else if (text) {
+            liveSaved = true;
           }
           replyDone = true;
           pendingSpeech = 0;
@@ -433,8 +439,16 @@ export function createVoiceSession(options: VoiceSessionOptions): VoiceSession {
       maybeFinishSpeaking();
     },
     setMode(mode: VoiceMode) {
+      const listening = machine.phase === 'listening';
       options.provider.setMode(mode);
       dispatch({ type: 'set-mode', mode });
+      if (mode === 'push-to-talk' && listening) {
+        suppressMic = true;
+        options.provider.suspend?.();
+        cancelPlayback();
+        cancelDeviceSpeech();
+        dispatch({ type: 'stop' });
+      }
     },
   };
 }
